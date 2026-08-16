@@ -1,0 +1,17 @@
+{
+  "name": "discord-content-moderator",
+  "version": "1.0.0",
+  "description": "Discord bot that detects and removes graphic gore and NSFW images.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.25.1",
+    "openai": "^5.12.2"
+  }
+}
