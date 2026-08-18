@@ -5,7 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node --import ./moderation-preload.js index.js"
   },
   "engines": {
     "node": ">=20"
