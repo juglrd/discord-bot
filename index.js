@@ -25,6 +25,9 @@ const PREFIX = "'";
 const DATA_FILE = './settings.json';
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']);
 const spamBuckets = new Map();
+const duplicateSpamBuckets = new Map();
+const DUPLICATE_WINDOW_MS = 10000;
+const DUPLICATE_THRESHOLD = 3;
 
 const DEFAULTS = {
   nsfwFilter: true,
@@ -215,16 +218,71 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  if (cfg.antiSpam) {
+  if (cfg.antiSpam && !isMod(message.member)) {
     const now = Date.now();
-    const bucket = spamBuckets.get(message.author.id) || [];
+
+    // Rapid-message spam detection.
+    const rapidKey = `${message.guild.id}:${message.author.id}`;
+    const bucket = spamBuckets.get(rapidKey) || [];
     bucket.push(now);
     while (bucket.length && bucket[0] < now - 6000) bucket.shift();
-    spamBuckets.set(message.author.id, bucket);
-    if (bucket.length >= 7 && !isMod(message.member)) {
+    spamBuckets.set(rapidKey, bucket);
+
+    if (bucket.length >= 7) {
       await message.member.timeout(10 * 60 * 1000, 'Automatic anti-spam protection').catch(() => {});
-      spamBuckets.delete(message.author.id);
+      spamBuckets.delete(rapidKey);
       await logAction(message.guild, '🚨 Anti-spam triggered', `${message.author} was automatically timed out for rapid messaging.`, 0xed4245);
+      return;
+    }
+
+    // Duplicate spam detection: same text, same attachment(s), or the same
+    // text + attachment combination repeated several times in a short window.
+    const attachmentKey = [...message.attachments.values()]
+      .map(a => a.url.split('?')[0])
+      .sort()
+      .join('|');
+    const normalizedContent = message.content.trim().replace(/\s+/g, ' ');
+    const duplicateKey = `${normalizedContent}::${attachmentKey}`;
+    const bucketKey = `${message.guild.id}:${message.channel.id}:${message.author.id}:${duplicateKey}`;
+
+    let duplicates = duplicateSpamBuckets.get(bucketKey) || [];
+    duplicates = duplicates.filter(entry => entry.createdAt >= now - DUPLICATE_WINDOW_MS);
+    duplicates.push({ id: message.id, createdAt: now });
+    duplicateSpamBuckets.set(bucketKey, duplicates);
+
+    if (duplicates.length >= DUPLICATE_THRESHOLD) {
+      const fetched = await message.channel.messages.fetch({ limit: 100 }).catch(() => null);
+      const ids = new Set(duplicates.map(entry => entry.id));
+
+      if (fetched) {
+        for (const msg of fetched.values()) {
+          if (msg.author.id !== message.author.id) continue;
+          const msgAttachmentKey = [...msg.attachments.values()]
+            .map(a => a.url.split('?')[0])
+            .sort()
+            .join('|');
+          const msgContent = msg.content.trim().replace(/\s+/g, ' ');
+          if (`${msgContent}::${msgAttachmentKey}` === duplicateKey) ids.add(msg.id);
+        }
+      }
+
+      let deleted = 0;
+      for (const id of ids) {
+        if (id === message.id) {
+          if (await message.delete().then(() => true).catch(() => false)) deleted++;
+        } else {
+          const msg = fetched?.get(id);
+          if (msg && await msg.delete().then(() => true).catch(() => false)) deleted++;
+        }
+      }
+
+      duplicateSpamBuckets.delete(bucketKey);
+      await logAction(
+        message.guild,
+        '🧹 Duplicate spam removed',
+        `${message.author} spammed the same message/attachment in <#${message.channel.id}>.\n**Deleted:** ${deleted} message(s).`,
+        0xed4245
+      );
       return;
     }
   }
