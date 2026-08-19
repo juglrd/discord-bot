@@ -1,11 +1,11 @@
 {
   "name": "discord-content-moderator",
   "version": "1.0.0",
-  "description": "Discord bot that detects and removes graphic gore and NSFW images.",
+  "description": "Discord bot that detects and removes graphic gore, NSFW content, and malicious links.",
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node --import ./moderation-preload.js index.js"
+    "start": "node --import ./moderation-preload.js --import ./link-security-preload.js index.js"
   },
   "engines": {
     "node": ">=20"
