@@ -39,7 +39,7 @@ async function contentScan(message){if(!message.guild)return;const c=cfg(message
 function rateLimited(gid,uid){const key=`${gid}:${uid}`,now=Date.now(),x=userRate.get(key)||[];while(x.length&&now-x[0]>USER_WINDOW)x.shift();if(x.length>=USER_LIMIT){userRate.set(key,x);return true;}x.push(now);userRate.set(key,x);return false;}
 async function imageSpamScan(message){
   const c=cfg(message.guild.id);
-  if(!c.antiSpam||mod(message.member))return;
+  if(!c.antiSpam)return;
   const imageCount=[...message.attachments.values()].filter(a=>IMAGE_TYPES.has(a.contentType)||/\\.(?:png|jpe?g|webp|gif)(?:\\?|$)/i.test(a.url||'')).length;
   if(!imageCount)return;
   const key=`${message.guild.id}:${message.author.id}`,now=Date.now();
