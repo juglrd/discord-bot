@@ -49,6 +49,9 @@ function hostMatches(host,set){
 function localVerdict(item){
   const u=item.url, host=u.hostname.toLowerCase();
   if(hostMatches(host,IP_LOGGER_HOSTS))return 'IP logger / tracking service';
+  const ipv4=/^(?:\\d{1,3}\\.){3}\\d{1,3}$/.test(host);
+  const ipv6=host.includes(':');
+  if(ipv4||ipv6)return 'direct IP-address URL';
   if(u.username||u.password)return 'URL contains embedded credentials';
   // Block obvious executable/download payloads only when the URL itself is clearly a file payload.
   if(/\.(?:exe|scr|msi|bat|cmd|ps1|vbs|vbe|jar|hta|apk|dmg|iso)(?:$|[?#])/i.test(u.pathname))return 'direct executable download';
@@ -100,8 +103,9 @@ async function inspect(message){
   const safe=await reputation(reputationUrls);
   for(const item of links){const v=safe.get(item.url.href);if(v)reasons.push({url:item.raw,reason:`Google Safe Browsing: ${v}`});}
   if(!reasons.length)return;
-  await message.delete().catch(()=>{});
-  await audit(message.guild,'🚫 Malicious link blocked',`${message.author} • **Channel:** <#${message.channel.id}>\n**Message ID:** \`${message.id}\`\n**Reason:** ${reasons.map(x=>`${x.reason} — \`${x.url}\``).join('\n')}\n**Message:** ${(message.content||'[link/attachment]').slice(0,700).replace(/`/g,'ˋ')}`);
+  const deleted=await message.delete().then(()=>true).catch(()=>false);
+  if(!deleted)return;
+  await audit(message.guild,'🚫 Link deleted',`${message.author} • **Channel:** <#${message.channel.id}>\n**Message ID:** \`${message.id}\`\n**Reason:** ${reasons.map(x=>`${x.reason} — \`${x.url}\``).join('\n')}\n**Message:** ${(message.content||'[link/attachment]').slice(0,700).replace(/`/g,'ˋ')}`);
 }
 
 const OriginalLogin=Client.prototype.login;
