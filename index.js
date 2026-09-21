@@ -76,6 +76,28 @@ const slashCommands=[
 
 client.once('ready',async()=>{console.log(`Logged in as ${client.user.tag}`);try{await client.application.commands.set(slashCommands);console.log('Slash commands registered.');}catch(e){console.error('Slash command registration failed:',e.message);}});
 client.on('messageCreate',async message=>{if(!message.inGuild()||message.author.bot)return;const cfg=getConfig(message.guild.id);try{const prefix=cfg.prefix||DEFAULT_PREFIX;if(message.content.startsWith(prefix)){const parts=message.content.slice(prefix.length).trim().split(/\s+/);const name=parts.shift()?.toLowerCase();if(name)await executeCommand(message,name,parts).catch(e=>console.error('Prefix command failed:',e?.message||e));}}catch(e){console.error('Message handler failed:',e?.message||e);}});
-client.on('interactionCreate',async i=>{if(!i.isChatInputCommand()||!i.inGuild())return;const cfg=getConfig(i.guild.id);try{if(i.commandName==='prefix'){if(!isMod(i.member))return i.reply({content:'❌ Moderator permission required.',ephemeral:true});const p=i.options.getString('value');if(!p||p.length>3||/\s/.test(p)||p.startsWith('/'))return i.reply({content:'❌ Prefix must be 1-3 non-space characters and cannot start with /.',ephemeral:true});cfg.prefix=p;saveData();return i.reply(`✅ Prefix changed to \`${p}\`.`);}if(i.commandName==='help')return i.reply(helpText(cfg.prefix||DEFAULT_PREFIX));if(['nsfw','gore','pii','antiinvite','antispam'].includes(i.commandName)){if(!isMod(i.member))return i.reply({content:'❌ Moderator permission required.',ephemeral:true});const state=i.options.getString('state');const key=i.commandName==='nsfw'?'nsfwFilter':i.commandName==='gore'?'goreFilter':i.commandName;cfg[key]=state==='on';saveData();return i.reply(`✅ **${i.commandName}** is now **${state}**.`);}if(i.commandName==='config')return i.reply({embeds:[new EmbedBuilder().setTitle('🛡️ Server protection').setColor(0x5865f2).addFields({name:'Prefix',value:`\`${cfg.prefix}\``,inline:true},{name:'NSFW',value:cfg.nsfwFilter?'🟢 On':'🔴 Off',inline:true},{name:'Gore',value:cfg.goreFilter?'🟢 On':'🔴 Off',inline:true},{name:'PII',value:cfg.piiFilter?'🟢 On':'🔴 Off',inline:true},{name:'Anti-spam/flood',value:cfg.antiSpam?'🟢 On':'🔴 Off',inline:true},{name:'Anti-invite',value:cfg.antiInvite?'🟢 On':'🔴 Off',inline:true})]});}catch(e){console.error('Interaction failed:',e?.message||e);if(!i.replied&&!i.deferred)await i.reply({content:'❌ Something went wrong.',ephemeral:true}).catch(()=>{});}});
+client.on('interactionCreate',async i=>{
+  if(!i.isChatInputCommand()||!i.inGuild())return;
+  const cfg=getConfig(i.guild.id);
+  const filterCommands=['prefix','nsfw','gore','pii','setlogs','config','antiinvite','antispam'];
+  const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
+  try{
+    await interactionLog(i,i.commandName,[]);
+    if(filterCommands.includes(i.commandName)&&!canManageServer(i.member))return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Manage Server** to use this command.',0xed4245)],ephemeral:true});
+    if(moderationCommands.includes(i.commandName)&&!canBan(i.member))return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Ban Members** to use moderation commands.',0xed4245)],ephemeral:true});
+    if(i.commandName==='prefix'){
+      const p=i.options.getString('value');
+      if(!p||p.length>3||/\s/.test(p)||p.startsWith('/'))return i.reply({embeds:[commandEmbed('⚙️ Invalid prefix','Prefix must be 1-3 non-space characters and cannot start with /.',0xed4245)],ephemeral:true});
+      cfg.prefix=p;saveData();return i.reply({embeds:[commandEmbed('⚙️ Prefix changed','Prefix is now **`'+p+'`**.',0x57f287)]});
+    }
+    if(i.commandName==='help')return i.reply({embeds:[commandEmbed('📖 Commands',helpText(cfg.prefix||DEFAULT_PREFIX))]});
+    if(['nsfw','gore','pii','antiinvite','antispam'].includes(i.commandName)){
+      const state=i.options.getString('state');
+      const key=i.commandName==='nsfw'?'nsfwFilter':i.commandName==='gore'?'goreFilter':i.commandName;
+      cfg[key]=state==='on';saveData();return i.reply({embeds:[commandEmbed('🛡️ Filter updated','**'+i.commandName.toUpperCase()+'** is now **'+state+'**.',0x57f287)]});
+    }
+    if(i.commandName==='config')return i.reply({embeds:[new EmbedBuilder().setTitle('🛡️ Server protection').setColor(0x5865f2).setTimestamp().addFields({name:'Prefix',value:'`'+cfg.prefix+'`',inline:true},{name:'NSFW',value:cfg.nsfwFilter?'🟢 On':'🔴 Off',inline:true},{name:'Gore',value:cfg.goreFilter?'🟢 On':'🔴 Off',inline:true},{name:'PII',value:cfg.piiFilter?'🟢 On':'🔴 Off',inline:true},{name:'Anti-spam/flood',value:cfg.antiSpam?'🟢 On':'🔴 Off',inline:true},{name:'Anti-invite',value:cfg.antiInvite?'🟢 On':'🔴 Off',inline:true})]});
+  }catch(e){console.error('Interaction failed:',e?.message||e);if(!i.replied&&!i.deferred)await i.reply({embeds:[commandEmbed('❌ Error','Something went wrong.',0xed4245)],ephemeral:true}).catch(()=>{});}
+});
 
 client.login(process.env.DISCORD_TOKEN).then(()=>console.log('Discord login successful')).catch(e=>{console.error('Discord login failed:',e?.message||e);process.exit(1);});
