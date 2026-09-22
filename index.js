@@ -10,13 +10,22 @@ const DEFAULT_PREFIX = "'";
 const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {} };
 
 function loadData(){ try { return JSON.parse(fs.readFileSync(DATA_FILE,'utf8')); } catch { return {}; } }
-const data = loadData();
+const data = globalThis.__juglrdBotSettings ??= loadData();
 function saveData(){ try { fs.writeFileSync(DATA_FILE, JSON.stringify(data,null,2)); } catch(e) { console.error('Could not save settings:', e.message); } }
 function getConfig(guildId){ if(!data[guildId]) data[guildId]=structuredClone(DEFAULTS); data[guildId]={...DEFAULTS,...data[guildId],warnings:data[guildId].warnings||{}}; if(typeof data[guildId].prefix!=='string'||!data[guildId].prefix)data[guildId].prefix=DEFAULT_PREFIX; return data[guildId]; }
 function isMod(member){ return !!(member?.permissions.has(PermissionsBitField.Flags.ManageGuild)||member?.permissions.has(PermissionsBitField.Flags.ManageMessages)||member?.permissions.has(PermissionsBitField.Flags.Administrator)); }
 function canBan(member){ return !!member?.permissions.has(PermissionsBitField.Flags.BanMembers); }
 function canManageServer(member){ return !!member?.permissions.has(PermissionsBitField.Flags.ManageGuild); }
 function commandEmbed(title,description,color=0x5865f2){ return new EmbedBuilder().setTitle(title).setDescription(description).setColor(color).setTimestamp(); }
+function warningEmbed(target,reason,moderator){
+  const safeReason=String(reason||'No reason provided').replace(/\r?\n/g,' ').replace(/`/g,'ˋ').slice(0,800);
+  return new EmbedBuilder()
+    .setAuthor({name:target.user.username,iconURL:target.user.displayAvatarURL({size:128})})
+    .setTitle('Warning')
+    .setColor(0x2b2d31)
+    .setDescription('> You have successfully warned '+target+'\n> **Reason:** `'+safeReason+'`\n\nDuration: **Indefinite** | By: **'+moderator.username+'**')
+    .setTimestamp();
+}
 async function commandLog(message,name,args,result='used'){
   const cfg=getConfig(message.guild.id);
   if(!cfg.auditChannelId)return;
@@ -51,7 +60,7 @@ async function executeCommand(message,name,args){
   if(name==='config') return message.reply({embeds:[new EmbedBuilder().setTitle('🛡️ Server protection').setColor(0x5865f2).setTimestamp().addFields({name:'Prefix',value:`\`${prefix}\``,inline:true},{name:'NSFW',value:cfg.nsfwFilter?'🟢 On':'🔴 Off',inline:true},{name:'Gore',value:cfg.goreFilter?'🟢 On':'🔴 Off',inline:true},{name:'PII',value:cfg.piiFilter?'🟢 On':'🔴 Off',inline:true},{name:'Anti-spam/flood',value:cfg.antiSpam?'🟢 On':'🔴 Off',inline:true},{name:'Anti-invite',value:cfg.antiInvite?'🟢 On':'🔴 Off',inline:true})]});
   const target=message.mentions.members.first();
   if(['warn','warnings','clearwarnings','timeout','kick','ban'].includes(name)&&!target)return message.reply({embeds:[commandEmbed('❌ Missing member','Mention a member. Example: `'+prefix+name+' @user`',0xed4245)]});
-  if(name==='warn'){const reason=args.slice(1).join(' ')||'No reason provided';cfg.warnings[target.id]??=[];cfg.warnings[target.id].push({reason,moderator:message.author.id,at:new Date().toISOString()});saveData();return message.reply({embeds:[commandEmbed('⚠️ Warning issued',`${target} has been warned.\\n**Reason:** ${reason}`,0xfee75c)]});}
+  if(name==='warn'){const reason=args.slice(1).join(' ')||'No reason provided';cfg.warnings[target.id]??=[];cfg.warnings[target.id].push({reason,moderator:message.author.id,at:new Date().toISOString()});saveData();return message.reply({embeds:[warningEmbed(target,reason,message.author)]});}
   if(name==='warnings'){const w=cfg.warnings[target.id]||[];return message.reply(w.length?`**Warnings for ${target}:**\n${w.map((x,i)=>`${i+1}. ${x.reason}`).join('\n')}`:`✅ ${target} has no warnings.`);}
   if(name==='clearwarnings'){delete cfg.warnings[target.id];saveData();return message.reply({embeds:[commandEmbed('🧹 Warnings cleared',`Cleared warnings for ${target}.`,0x57f287)]});}
   if(name==='timeout'){const ms=parseDuration(args[1]);if(!ms)return message.reply(`Usage: \`${prefix}timeout @user 10m [reason]\``);await target.timeout(Math.min(ms,28*86400000),args.slice(2).join(' ')||'No reason provided');return message.reply({embeds:[commandEmbed('⏱️ Member timed out','Timed out '+target+' for **'+formatDuration(ms)+'**.',0x57f287)]});}
@@ -94,6 +103,8 @@ client.on('interactionCreate',async i=>{
   const cfg=getConfig(i.guild.id);
   const filterCommands=['prefix','nsfw','gore','pii','setlogs','config','antiinvite','antispam'];
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
+  const advancedCommands=['modpanel','modstats','history','why','channelmode'];
+  if(advancedCommands.includes(i.commandName))return;
   const replyError=async e=>{
     console.error('Interaction failed:',e?.stack||e?.message||e);
     if(!i.replied&&!i.deferred)await i.reply({embeds:[commandEmbed('❌ Error','Something went wrong.',0xed4245)],ephemeral:true}).catch(()=>{});
@@ -154,7 +165,7 @@ client.on('interactionCreate',async i=>{
       cfg.warnings[target.id]??=[];
       cfg.warnings[target.id].push({reason,moderator:i.user.id,at:new Date().toISOString()});
       saveData();
-      return i.reply({embeds:[commandEmbed('⚠️ Warning issued',target+' has been warned.\n**Reason:** '+reason,0xfee75c)]});
+      return i.reply({embeds:[warningEmbed(target,reason,i.user)]});
     }
 
     if(i.commandName==='warnings'){
@@ -200,9 +211,6 @@ client.on('interactionCreate',async i=>{
       await i.channel.setRateLimitPerUser(seconds);
       return i.reply({embeds:[commandEmbed('🐢 Slowmode updated','Slowmode set to '+seconds+'s.',0x57f287)]});
     }
-
-    // These commands are handled by moderation-preload.js.
-    if(['modpanel','modstats','history','why','channelmode'].includes(i.commandName))return;
 
   }catch(e){await replyError(e);}
 });
