@@ -105,6 +105,10 @@ client.on('interactionCreate',async i=>{
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
   const advancedCommands=['modpanel','modstats','history','why','channelmode'];
   if(advancedCommands.includes(i.commandName))return;
+  const handledCommands=new Set(['help',...filterCommands,...moderationCommands]);
+  if(!handledCommands.has(i.commandName)){
+    return i.reply({embeds:[commandEmbed('❌ Command unavailable','`/'+i.commandName+'` is registered to this application, but this version of the bot does not have a handler for it yet.',0xed4245)],ephemeral:true}).catch(()=>{});
+  }
   const replyError=async e=>{
     console.error('Interaction failed:',e?.stack||e?.message||e);
     if(!i.replied&&!i.deferred)await i.reply({embeds:[commandEmbed('❌ Error','Something went wrong.',0xed4245)],ephemeral:true}).catch(()=>{});
