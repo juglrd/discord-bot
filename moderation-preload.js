@@ -8,13 +8,13 @@ import sharp from 'sharp';
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 0 }) : null;
 const DATA_FILE = './settings.json';
 const DEFAULTS = { prefix: "'", nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, channelModes: {}, history: {} };
-const cache = new Map(), userRate = new Map(), spam = new Map(), mentionSpam = new Map(), imageSpam = new Map(), repeatedSpam = new Map(), activeSpam = new Map(), automodRules = new Map(), historyRuntime = new Map(), dashboard = new Map(), queue = [];
+const cache = new Map(), userRate = new Map(), spam = new Map(), mentionSpam = new Map(), imageSpam = new Map(), repeatedSpam = new Map(), activeSpam = new Map(), automodRules = new Map(), historyRuntime = new Map(), imageFingerprints = new Map(), dashboard = new Map(), queue = [];
 let active = 0;
 const MAX_CONCURRENCY=1, USER_WINDOW=10000, USER_LIMIT=8, FLOOD_WINDOW=10000, FLOOD_LIMIT=15, MENTION_WINDOW=8000, MENTION_LIMIT=6, IMAGE_WINDOW=10000, IMAGE_LIMIT=6, MAX_QUEUE=100;
 const IMAGE_TYPES=new Set(['image/jpeg','image/jpg','image/png','image/webp','image/gif']);
 const GIF_FRAME_LIMIT=8, GIF_MAX_BYTES=15*1024*1024, REPEAT_WINDOW=15000, REPEAT_LIMIT=3, SIMILARITY_THRESHOLD=0.88, ACTIVE_SPAM_COOLDOWN=7000, MAX_HISTORY=100;
 function load(){try{return JSON.parse(fs.readFileSync(DATA_FILE,'utf8'));}catch{return {};}}
-const data=load();
+const data=globalThis.__juglrdBotSettings ??= load();
 function save(){try{fs.writeFileSync(DATA_FILE,JSON.stringify(data,null,2));}catch(e){console.error('[mod] settings save failed:',e.message);}}
 function cfg(gid){if(!data[gid])data[gid]=structuredClone(DEFAULTS);data[gid]={...DEFAULTS,...data[gid],warnings:data[gid].warnings||{},channelModes:data[gid].channelModes||{},history:data[gid].history||{}};return data[gid];}
 function channelMode(gid,cid){return cfg(gid).channelModes?.[cid]||'normal';}
@@ -28,6 +28,64 @@ function attachmentSummary(attachments=[]){return attachments.length?attachments
 async function log(g,title,body,color=0x5865f2){const c=cfg(g.id);if(!c.auditChannelId)return;const ch=g.channels.cache.get(c.auditChannelId);if(!ch?.isTextBased())return;await ch.send({embeds:[new EmbedBuilder().setTitle(title).setDescription(body.slice(0,3900)).setColor(color).setTimestamp()]}).catch(()=>{});}
 function cached(k){const x=cache.get(k);if(!x||Date.now()-x.time>30000){cache.delete(k);return null;}return x.result;}
 function put(k,result){cache.set(k,{result,time:Date.now()});if(cache.size>500)cache.delete(cache.keys().next().value);}
+async function getAutoModRules(guild){
+  const hit=automodRules.get(guild.id);
+  if(hit&&Date.now()-hit.time<60000)return hit.rules;
+  try{
+    const rules=await guild.autoModerationRules.fetch();
+    const list=[...rules.values()].filter(r=>r.enabled);
+    automodRules.set(guild.id,{rules:list,time:Date.now()});
+    return list;
+  }catch(e){
+    console.error('[mod] AutoMod rule fetch:',e?.message||e);
+    automodRules.set(guild.id,{rules:[],time:Date.now()});
+    return [];
+  }
+}
+function collectionHas(value,id){
+  if(!value)return false;
+  if(typeof value.has==='function')return value.has(id);
+  if(Array.isArray(value))return value.includes(id);
+  return false;
+}
+function regexEscape(value=''){return String(value).replace(/[.*+?^${}()|[\]\\]/g,'\\function put(k,result){cache.set(k,{result,time:Date.now()});if(cache.size>500)cache.delete(cache.keys().next().value);}
+');}
+function keywordMatches(text,keyword){
+  const t=String(text||''), k=String(keyword||'').trim();
+  if(!k)return false;
+  if(k.includes('*')){
+    const pattern=k.split('*').map(regexEscape).join('.*');
+    try{return new RegExp(pattern,'i').test(t)||new RegExp(pattern,'i').test(norm(t));}catch{return false;}
+  }
+  const nk=norm(k);
+  return !!nk&&(norm(t).includes(nk)||t.toLowerCase().includes(k.toLowerCase()));
+}
+async function automodMatches(message){
+  const text=message.content||'';
+  if(!text.trim())return [];
+  const rules=await getAutoModRules(message.guild);
+  const roles=message.member?.roles?.cache;
+  const hits=[];
+  for(const rule of rules){
+    if(collectionHas(rule.exemptChannels,message.channel.id))continue;
+    const exemptRoles=rule.exemptRoles?.keys?Array.from(rule.exemptRoles.keys()):(rule.exemptRoles||[]);
+    if(exemptRoles.some(id=>collectionHas(roles,id)))continue;
+    const meta=rule.triggerMetadata||{};
+    const allow=meta.allowList||[];
+    if(allow.some(x=>keywordMatches(text,x)))continue;
+    const keyword=meta.keywordFilter||[];
+    const regexes=meta.regexPatterns||[];
+    const keywordHit=keyword.find(x=>keywordMatches(text,x));
+    if(keywordHit)hits.push('**'+rule.name+'** keyword: `'+String(keywordHit).replace(/`/g,'ˋ')+'`');
+    let regexHit=null;
+    for(const pattern of regexes){
+      try{if(new RegExp(pattern,'i').test(text)||new RegExp(pattern,'i').test(norm(text))){regexHit=pattern;break;}}catch{}
+    }
+    if(regexHit)hits.push('**'+rule.name+'** regex: `'+String(regexHit).replace(/`/g,'ˋ')+'`');
+    if(hits.length>=5)break;
+  }
+  return hits;
+}
 async function api(fn){for(let i=0;i<3;i++){try{return await fn();}catch(e){if(e?.status!==429)throw e;await new Promise(r=>setTimeout(r,Math.min(8000,1000*(i+1))));}}throw new Error('moderation API rate limited');}
 function enqueue(fn){if(queue.length>=MAX_QUEUE)queue.shift();queue.push(fn);runQueue();}
 async function runQueue(){if(active>=MAX_CONCURRENCY||!queue.length)return;active++;const fn=queue.shift();try{await fn();}catch(e){console.error('[mod] task failed:',e?.message||e);}finally{active--;runQueue();}}
@@ -43,8 +101,10 @@ async function contentScan(message){if(!message.guild||channelMode(message.guild
 async function imageHash(url){try{const buf=await fetchBuffer(url);const raw=await sharp(buf,{animated:false}).resize(17,16,{fit:'fill'}).grayscale().raw().toBuffer();let bits='';for(let y=0;y<16;y++)for(let x=0;x<16;x++)bits+=raw[y*17+x]>raw[y*17+x+1]?'1':'0';return bits;}catch{return null;}}
 function hashSimilarity(a,b){if(!a||!b||a.length!==b.length)return 0;let n=0;for(let i=0;i<a.length;i++)if(a[i]===b[i])n++;return n/a.length;}
 async function imageSimilarity(message){const key=message.guild.id+':'+message.author.id,old=imageFingerprints.get(key)||[],fps=[];for(const a of [...message.attachments.values()].slice(0,8)){if(!IMAGE_TYPES.has(a.contentType)&&!/\.(?:png|jpe?g|webp|gif)(?:\?|$)/i.test(a.url||''))continue;const h=await imageHash(a.url);if(h)fps.push(h);}let best=0;for(const a of fps)for(const b of old)best=Math.max(best,hashSimilarity(a,b));imageFingerprints.set(key,[...old,...fps].slice(-16));return {best,fps};}
-async function activeSpamScan(message){if(channelMode(message.guild.id,message.channel.id)==='off')return false;const key=message.guild.id+':'+message.author.id,st=activeSpam.get(key);if(!st||Date.now()>st.until){activeSpam.delete(key);return false;}if(mod(message.member))return false;const fp=spamFingerprint(message.content||''),textMatch=fp&&st.fps?.some(x=>similarity(fp,x)>=SIMILARITY_THRESHOLD);let imageMatch=false;if(message.attachments.size&&st.hashes?.length){const r=await imageSimilarity(message);imageMatch=r.fps.some(x=>st.hashes.some(y=>hashSimilarity(x,y)>=0.90));}if(!textMatch&&!imageMatch)return false;const deleted=await message.delete().then(()=>true).catch(()=>false);if(deleted){const type=imageMatch?'Image spam':'Repeated spam';addHistory(message.guild.id,message.author.id,{type,channelId:message.channel.id,messageId:message.id,details:{reason:'Matched active spam state'}});addEvent(message.guild.id,message.channel.id,type);await log(message.guild,'🔥 Active spam blocked',message.author+' • **Channel:** <#'+message.channel.id+'>\\n**Reason:** '+type,0xed4245);}return deleted;}
-async function imageSpamScan(message){const c=cfg(message.guild.id);if(!c.antiSpam||!IMAGE_TYPES.size||channelMode(message.guild.id,message.channel.id)==='off')return false;const count=[...message.attachments.values()].filter(x=>IMAGE_TYPES.has(x.contentType)||/\.(?:png|jpe?g|webp|gif)(?:\?|$)/i.test(x.url||'')).length;if(!count)return false;const sim=await imageSimilarity(message);if(sim.best>=0.90){const deleted=await message.delete().then(()=>true).catch(()=>false);if(deleted){activeSpam.set(message.guild.id+':'+message.author.id,{fps:[],hashes:sim.fps,until:Date.now()+ACTIVE_SPAM_COOLDOWN});addHistory(message.guild.id,message.author.id,{type:'Image spam',channelId:message.channel.id,messageId:message.id,details:{reason:'Visually similar attachment ('+Math.round(sim.best*100)+'%)'}});addEvent(message.guild.id,message.channel.id,'Image spam');}return deleted;}const key=message.guild.id+':'+message.author.id,now=Date.now(),x=imageSpam.get(key)||[];x.push({message,count,time:now});while(x.length&&now-x[0].time>IMAGE_WINDOW)x.shift();imageSpam.set(key,x);const total=x.reduce((n,v)=>n+v.count,0);if(total<IMAGE_LIMIT)return false;let deleted=0;for(const v of x)if(await v.message.delete().then(()=>true).catch(()=>false))deleted++;imageSpam.delete(key);activeSpam.set(key,{fps:[],hashes:sim.fps,until:Date.now()+ACTIVE_SPAM_COOLDOWN});addHistory(message.guild.id,message.author.id,{type:'Image spam',channelId:message.channel.id,messageId:message.id,details:{reason:total+' images within '+IMAGE_WINDOW/1000+'s',messagesDeleted:deleted}});addEvent(message.guild.id,message.channel.id,'Image spam');return true;}
+async function activeSpamScan(message){if(channelMode(message.guild.id,message.channel.id)==='off')return false;const key=message.guild.id+':'+message.author.id,st=activeSpam.get(key);if(!st||Date.now()>st.until){activeSpam.delete(key);return false;}const moderator=mod(message.member);const fp=spamFingerprint(message.content||''),textMatch=!moderator&&fp&&st.fps?.some(x=>similarity(fp,x)>=SIMILARITY_THRESHOLD);let imageMatch=false;if(message.attachments.size&&st.hashes?.length){const r=await imageSimilarity(message);imageMatch=r.fps.some(x=>st.hashes.some(y=>hashSimilarity(x,y)>=0.90));}if(!textMatch&&!imageMatch)return false;const deleted=await message.delete().then(()=>true).catch(()=>false);if(deleted){const type=imageMatch?'Image spam':'Repeated spam';addHistory(message.guild.id,message.author.id,{type,channelId:message.channel.id,messageId:message.id,details:{reason:'Matched active spam state'}});addEvent(message.guild.id,message.channel.id,type);await log(message.guild,'🔥 Active spam blocked',message.author+' • **Channel:** <#'+message.channel.id+'>\\n**Reason:** '+type,0xed4245);}return deleted;}
+async function imageSpamScan(message){const c=cfg(message.guild.id);if(!c.antiSpam||!IMAGE_TYPES.size||channelMode(message.guild.id,message.channel.id)==='off')return false;const count=[...message.attachments.values()].filter(x=>IMAGE_TYPES.has(x.contentType)||/\.(?:png|jpe?g|webp|gif)(?:\?|$)/i.test(x.url||'')).length;if(!count)return false;const sim=await imageSimilarity(message);if(sim.best>=0.90){const deleted=await message.delete().then(()=>true).catch(()=>false);if(deleted){activeSpam.set(message.guild.id+':'+message.author.id,{fps:[],hashes:sim.fps,until:Date.now()+ACTIVE_SPAM_COOLDOWN});addHistory(message.guild.id,message.author.id,{type:'Image spam',channelId:message.channel.id,messageId:message.id,details:{reason:'Visually similar attachment ('+Math.round(sim.best*100)+'%)'}});addEvent(message.guild.id,message.channel.id,'Image spam');const d=dashboard.get(message.guild.id)||{};d.imageSpam=(d.imageSpam||0)+1;dashboard.set(message.guild.id,d);}return deleted;}const key=message.guild.id+':'+message.author.id,now=Date.now(),x=imageSpam.get(key)||[];x.push({message,count,time:now});while(x.length&&now-x[0].time>IMAGE_WINDOW)x.shift();imageSpam.set(key,x);const total=x.reduce((n,v)=>n+v.count,0);if(total<IMAGE_LIMIT)return false;let deleted=0;for(const v of x)if(await v.message.delete().then(()=>true).catch(()=>false))deleted++;imageSpam.delete(key);activeSpam.set(key,{fps:[],hashes:sim.fps,until:Date.now()+ACTIVE_SPAM_COOLDOWN});addHistory(message.guild.id,message.author.id,{type:'Image spam',channelId:message.channel.id,messageId:message.id,details:{reason:total+' images within '+IMAGE_WINDOW/1000+'s',messagesDeleted:deleted}});addEvent(message.guild.id,message.channel.id,'Image spam');const d=dashboard.get(message.guild.id)||{};d.imageSpam=(d.imageSpam||0)+1;dashboard.set(message.guild.id,d);return true;}
+function spamFingerprint(text=''){return norm(text).replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,' ').trim();}
+function similarity(a,b){if(!a||!b)return 0;if(a===b)return 1;const ta=new Set(a.split(' ').filter(Boolean)),tb=new Set(b.split(' ').filter(Boolean));if(!ta.size||!tb.size)return 0;let same=0;for(const t of ta)if(tb.has(t))same++;return same/(ta.size+tb.size-same);}
 async function repeatedContentScan(message){const c=cfg(message.guild.id);if(!c.antiSpam||mod(message.member)||channelMode(message.guild.id,message.channel.id)==='off')return false;const fp=spamFingerprint(message.content||'');if(fp.length<8)return false;const key=message.guild.id+':'+message.author.id,now=Date.now();const x=repeatedSpam.get(key)||[];while(x.length&&now-x[0].time>REPEAT_WINDOW)x.shift();const match=x.find(v=>similarity(fp,v.fp)>=SIMILARITY_THRESHOLD);x.push({message,fp,time:now});repeatedSpam.set(key,x.slice(-8));if(!match)return false;const recent=x.slice(-REPEAT_LIMIT);if(recent.length<REPEAT_LIMIT)return false;let deleted=0;for(const v of recent)if(await v.message.delete().then(()=>true).catch(()=>false))deleted++;repeatedSpam.delete(key);activeSpam.set(key,{fps:[fp,match.fp],until:Date.now()+ACTIVE_SPAM_COOLDOWN});addHistory(message.guild.id,message.author.id,{type:'Repeated spam',channelId:message.channel.id,messageId:message.id,details:{reason:'Repeated or near-identical content',messagesDeleted:deleted}});addEvent(message.guild.id,message.channel.id,'Repeated spam');const d=dashboard.get(message.guild.id)||{};d.spam=(d.spam||0)+1;dashboard.set(message.guild.id,d);await log(message.guild,'📋 Repeated spam blocked',message.author+' • **Channel:** <#'+message.channel.id+'>\n**Messages deleted:** '+deleted+'\n**State:** active for '+ACTIVE_SPAM_COOLDOWN/1000+'s',0xed4245);return true;}
 async function spamScan(message){const c=cfg(message.guild.id);if(!c.antiSpam||mod(message.member))return;if(await repeatedContentScan(message))return true;if(rateLimited(message.guild.id,message.author.id))return;const key=`${message.guild.id}:${message.author.id}`,now=Date.now();const x=spam.get(key)||[];x.push(message);while(x.length&&now-x[0].createdTimestamp>FLOOD_WINDOW)x.shift();spam.set(key,x);const mentions=message.mentions.users.size+message.mentions.roles.size+(message.mentions.everyone?5:0);const m=mentionSpam.get(key)||[];m.push({message,n:mentions,time:now});while(m.length&&now-m[0].time>MENTION_WINDOW)m.shift();mentionSpam.set(key,m);const mentionTotal=m.reduce((a,b)=>a+b.n,0);if(mentionTotal>=MENTION_LIMIT){for(const v of m)await v.message.delete().catch(()=>{});mentionSpam.delete(key);addHistory(message.guild.id,message.author.id,{type:'Mention spam',channelId:message.channel.id,messageId:message.id,details:{reason:mentionTotal+' mentions'}});addEvent(message.guild.id,message.channel.id,'Mention spam');const d=dashboard.get(message.guild.id)||{};d.spam=(d.spam||0)+1;dashboard.set(message.guild.id,d);await log(message.guild,'🚨 Mention spam blocked',`${message.author} • **Channel:** <#${message.channel.id}>\n**Mentions removed:** ${mentionTotal}\n**Trigger:** ${MENTION_LIMIT}+ mentions within ${MENTION_WINDOW/1000}s`,0xed4245);return true;}if(x.length>=FLOOD_LIMIT){const targets=x.slice(-30);let deleted=0;for(const m of targets)if(await m.delete().then(()=>true).catch(()=>false))deleted++;spam.delete(key);addHistory(message.guild.id,message.author.id,{type:'Flood',channelId:message.channel.id,messageId:message.id,details:{reason:FLOOD_LIMIT+'+ messages within '+FLOOD_WINDOW/1000+'s'}});addEvent(message.guild.id,message.channel.id,'Flood');const d=dashboard.get(message.guild.id)||{};d.spam=(d.spam||0)+1;dashboard.set(message.guild.id,d);await log(message.guild,'🌊 Flood blocked',`${message.author} • **Channel:** <#${message.channel.id}>\n**Messages deleted:** ${deleted}\n**Trigger:** ${FLOOD_LIMIT}+ messages within ${FLOOD_WINDOW/1000}s`,0xed4245);return true;}return false;}
 function incidentWeight(at){const age=Math.max(0,Date.now()-new Date(at).getTime());if(age<7*86400000)return 1;if(age<30*86400000)return 0.75;if(age<90*86400000)return 0.4;return 0.1;}
