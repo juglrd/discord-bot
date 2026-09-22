@@ -7,16 +7,19 @@ import sharp from 'sharp';
 
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 0 }) : null;
 const DATA_FILE = './settings.json';
-const DEFAULTS = { prefix: "'", nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {} };
-const cache = new Map(), userRate = new Map(), spam = new Map(), mentionSpam = new Map(), imageSpam = new Map(), repeatedSpam = new Map(), dashboard = new Map(), queue = [];
+const DEFAULTS = { prefix: "'", nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, channelModes: {}, history: {} };
+const cache = new Map(), userRate = new Map(), spam = new Map(), mentionSpam = new Map(), imageSpam = new Map(), repeatedSpam = new Map(), activeSpam = new Map(), automodRules = new Map(), historyRuntime = new Map(), dashboard = new Map(), queue = [];
 let active = 0;
 const MAX_CONCURRENCY=1, USER_WINDOW=10000, USER_LIMIT=8, FLOOD_WINDOW=10000, FLOOD_LIMIT=15, MENTION_WINDOW=8000, MENTION_LIMIT=6, IMAGE_WINDOW=10000, IMAGE_LIMIT=6, MAX_QUEUE=100;
 const IMAGE_TYPES=new Set(['image/jpeg','image/jpg','image/png','image/webp','image/gif']);
-const GIF_FRAME_LIMIT=8, GIF_MAX_BYTES=15*1024*1024, REPEAT_WINDOW=15000, REPEAT_LIMIT=3, SIMILARITY_THRESHOLD=0.88;
+const GIF_FRAME_LIMIT=8, GIF_MAX_BYTES=15*1024*1024, REPEAT_WINDOW=15000, REPEAT_LIMIT=3, SIMILARITY_THRESHOLD=0.88, ACTIVE_SPAM_COOLDOWN=7000, MAX_HISTORY=100;
 function load(){try{return JSON.parse(fs.readFileSync(DATA_FILE,'utf8'));}catch{return {};}}
 const data=load();
 function save(){try{fs.writeFileSync(DATA_FILE,JSON.stringify(data,null,2));}catch(e){console.error('[mod] settings save failed:',e.message);}}
-function cfg(gid){if(!data[gid])data[gid]=structuredClone(DEFAULTS);data[gid]={...DEFAULTS,...data[gid],warnings:data[gid].warnings||{}};return data[gid];}
+function cfg(gid){if(!data[gid])data[gid]=structuredClone(DEFAULTS);data[gid]={...DEFAULTS,...data[gid],warnings:data[gid].warnings||{},channelModes:data[gid].channelModes||{},history:data[gid].history||{}};return data[gid];}
+function channelMode(gid,cid){return cfg(gid).channelModes?.[cid]||'normal';}
+function addHistory(gid,uid,item){const c=cfg(gid),a=c.history[uid]||[];a.push({...item,at:item.at||new Date().toISOString()});c.history[uid]=a.slice(-MAX_HISTORY);save();}
+function addEvent(gid,cid,type){const d=dashboard.get(gid)||{};d.byType=d.byType||{};d.byType[type]=(d.byType[type]||0)+1;d.byChannel=d.byChannel||{};d.byChannel[cid]=(d.byChannel[cid]||0)+1;dashboard.set(gid,d);}
 function mod(member){return !!(member?.permissions.has(PermissionsBitField.Flags.ManageGuild)||member?.permissions.has(PermissionsBitField.Flags.ManageMessages)||member?.permissions.has(PermissionsBitField.Flags.Administrator));}
 function norm(s=''){return s.normalize('NFKC').toLowerCase().replace(/[\u200B-\u200D\uFEFF]/g,'').replace(/[@4]/g,'a').replace(/3/g,'e').replace(/[1!]/g,'i').replace(/0/g,'o').replace(/5/g,'s').replace(/7/g,'t').replace(/\s+/g,' ').trim();}
 function redact(s=''){return s.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,'[email redacted]').replace(/\b(?:https?:\/\/)?(?:\d{1,3}\.){3}\d{1,3}\b/g,'[IP redacted]').replace(/\b(?:\d{1,5}\s+)?[A-Za-z0-9.'-]+\s+(?:street|st|road|rd|avenue|ave|lane|ln|drive|dr|close|court|ct|way|boulevard|blvd)\b[^,\n]{0,80}/gi,'[address redacted]');}
