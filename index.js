@@ -25,6 +25,14 @@ async function commandLog(message,name,args,result='used'){
   const text=[`**User:** ${message.author} (${message.author.id})`,`**Channel:** <#${message.channel.id}>`,`**Command:** ${cfg.prefix||DEFAULT_PREFIX}${name}${args.length?' '+args.join(' '):''}`,`**Result:** ${result}`].join('\\n');
   await ch.send({embeds:[commandEmbed('📋 Command used',text,0x5865f2)]}).catch(()=>{});
 }
+async function interactionLog(interaction,name,result='used'){
+  const cfg=getConfig(interaction.guild.id);
+  if(!cfg.auditChannelId)return;
+  const ch=interaction.guild.channels.cache.get(cfg.auditChannelId);
+  if(!ch?.isTextBased())return;
+  const text=['**User:** '+interaction.user+' ('+interaction.user.id+')','**Channel:** <#'+interaction.channelId+'>','**Command:** /'+name,'**Result:** '+result].join('\\n');
+  await ch.send({embeds:[commandEmbed('📋 Command used',text,0x5865f2)]}).catch(()=>{});
+}
 function prefixFor(guildId){ return getConfig(guildId).prefix || DEFAULT_PREFIX; }
 function parseDuration(input){ const m=String(input||'').match(/^(\d+)(s|m|h|d)$/i); return m ? Number(m[1])*({s:1000,m:60000,h:3600000,d:86400000}[m[2].toLowerCase()]) : null; }
 function formatDuration(ms){ for(const [u,v] of [['d',86400000],['h',3600000],['m',60000],['s',1000]]) if(ms>=v)return `${Math.round(ms/v)}${u}`; return '0s'; }
@@ -86,23 +94,117 @@ client.on('interactionCreate',async i=>{
   const cfg=getConfig(i.guild.id);
   const filterCommands=['prefix','nsfw','gore','pii','setlogs','config','antiinvite','antispam'];
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
+  const replyError=async e=>{
+    console.error('Interaction failed:',e?.stack||e?.message||e);
+    if(!i.replied&&!i.deferred)await i.reply({embeds:[commandEmbed('❌ Error','Something went wrong.',0xed4245)],ephemeral:true}).catch(()=>{});
+  };
   try{
-    await interactionLog(i,i.commandName,[]);
-    if(filterCommands.includes(i.commandName)&&!canManageServer(i.member))return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Manage Server** to use this command.',0xed4245)],ephemeral:true});
-    if(moderationCommands.includes(i.commandName)&&!canBan(i.member))return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Ban Members** to use moderation commands.',0xed4245)],ephemeral:true});
+    await interactionLog(i,i.commandName);
+
+    if(filterCommands.includes(i.commandName)&&!canManageServer(i.member))
+      return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Manage Server** to use this command.',0xed4245)],ephemeral:true});
+
+    if(moderationCommands.includes(i.commandName)&&!canBan(i.member))
+      return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Ban Members** to use moderation commands.',0xed4245)],ephemeral:true});
+
+    if(i.commandName==='help')
+      return i.reply({embeds:[commandEmbed('📖 Commands',helpText(cfg.prefix||DEFAULT_PREFIX))]});
+
     if(i.commandName==='prefix'){
       const p=i.options.getString('value');
-      if(!p||p.length>3||/\s/.test(p)||p.startsWith('/'))return i.reply({embeds:[commandEmbed('⚙️ Invalid prefix','Prefix must be 1-3 non-space characters and cannot start with /.',0xed4245)],ephemeral:true});
-      cfg.prefix=p;saveData();return i.reply({embeds:[commandEmbed('⚙️ Prefix changed','Prefix is now **`'+p+'`**.',0x57f287)]});
+      if(!p||p.length>3||/\s/.test(p)||p.startsWith('/'))
+        return i.reply({embeds:[commandEmbed('⚙️ Invalid prefix','Prefix must be 1-3 non-space characters and cannot start with /.',0xed4245)],ephemeral:true});
+      cfg.prefix=p;saveData();
+      return i.reply({embeds:[commandEmbed('⚙️ Prefix changed','Prefix is now '+p+'.',0x57f287)]});
     }
-    if(i.commandName==='help')return i.reply({embeds:[commandEmbed('📖 Commands',helpText(cfg.prefix||DEFAULT_PREFIX))]});
+
     if(['nsfw','gore','pii','antiinvite','antispam'].includes(i.commandName)){
       const state=i.options.getString('state');
       const key=i.commandName==='nsfw'?'nsfwFilter':i.commandName==='gore'?'goreFilter':i.commandName;
-      cfg[key]=state==='on';saveData();return i.reply({embeds:[commandEmbed('🛡️ Filter updated','**'+i.commandName.toUpperCase()+'** is now **'+state+'**.',0x57f287)]});
+      cfg[key]=state==='on';saveData();
+      return i.reply({embeds:[commandEmbed('🛡️ Filter updated','**'+i.commandName.toUpperCase()+'** is now **'+state+'**.',0x57f287)]});
     }
-    if(i.commandName==='config')return i.reply({embeds:[new EmbedBuilder().setTitle('🛡️ Server protection').setColor(0x5865f2).setTimestamp().addFields({name:'Prefix',value:'`'+cfg.prefix+'`',inline:true},{name:'NSFW',value:cfg.nsfwFilter?'🟢 On':'🔴 Off',inline:true},{name:'Gore',value:cfg.goreFilter?'🟢 On':'🔴 Off',inline:true},{name:'PII',value:cfg.piiFilter?'🟢 On':'🔴 Off',inline:true},{name:'Anti-spam/flood',value:cfg.antiSpam?'🟢 On':'🔴 Off',inline:true},{name:'Anti-invite',value:cfg.antiInvite?'🟢 On':'🔴 Off',inline:true})]});
-  }catch(e){console.error('Interaction failed:',e?.message||e);if(!i.replied&&!i.deferred)await i.reply({embeds:[commandEmbed('❌ Error','Something went wrong.',0xed4245)],ephemeral:true}).catch(()=>{});}
+
+    if(i.commandName==='setlogs'){
+      const ch=i.options.getChannel('channel');
+      if(!ch?.isTextBased())return i.reply({embeds:[commandEmbed('📋 Audit logs','Choose a text channel.',0xed4245)],ephemeral:true});
+      cfg.auditChannelId=ch.id;saveData();
+      return i.reply({embeds:[commandEmbed('📋 Audit logs enabled','Commands and moderation events will be logged to '+ch+'.',0x57f287)]});
+    }
+
+    if(i.commandName==='config')
+      return i.reply({embeds:[new EmbedBuilder().setTitle('🛡️ Server protection').setColor(0x5865f2).setTimestamp()
+        .addFields(
+          {name:'Prefix',value:cfg.prefix,inline:true},
+          {name:'NSFW',value:cfg.nsfwFilter?'🟢 On':'🔴 Off',inline:true},
+          {name:'Gore',value:cfg.goreFilter?'🟢 On':'🔴 Off',inline:true},
+          {name:'PII',value:cfg.piiFilter?'🟢 On':'🔴 Off',inline:true},
+          {name:'Anti-spam/flood',value:cfg.antiSpam?'🟢 On':'🔴 Off',inline:true},
+          {name:'Anti-invite',value:cfg.antiInvite?'🟢 On':'🔴 Off',inline:true}
+        )]});
+
+    const user=i.options.getUser('user');
+    const target=user?await i.guild.members.fetch(user.id).catch(()=>null):null;
+
+    if(['warn','warnings','clearwarnings','timeout','kick','ban'].includes(i.commandName)&&!target)
+      return i.reply({embeds:[commandEmbed('❌ Missing member','That user is not currently in this server.',0xed4245)],ephemeral:true});
+
+    if(i.commandName==='warn'){
+      const reason=i.options.getString('reason')||'No reason provided';
+      cfg.warnings[target.id]??=[];
+      cfg.warnings[target.id].push({reason,moderator:i.user.id,at:new Date().toISOString()});
+      saveData();
+      return i.reply({embeds:[commandEmbed('⚠️ Warning issued',target+' has been warned.\n**Reason:** '+reason,0xfee75c)]});
+    }
+
+    if(i.commandName==='warnings'){
+      const w=cfg.warnings[target.id]||[];
+      return i.reply(w.length
+        ? '**Warnings for '+target+':**\n'+w.map((x,n)=>(n+1)+'. '+x.reason).join('\n')
+        : '✅ '+target+' has no warnings.');
+    }
+
+    if(i.commandName==='clearwarnings'){
+      delete cfg.warnings[target.id];saveData();
+      return i.reply({embeds:[commandEmbed('🧹 Warnings cleared','Cleared warnings for '+target+'.',0x57f287)]});
+    }
+
+    if(i.commandName==='timeout'){
+      const duration=i.options.getString('duration');
+      const ms=parseDuration(duration);
+      if(!ms)return i.reply({embeds:[commandEmbed('⏱️ Invalid duration','Use a duration like 10m, 2h, or 1d.',0xed4245)],ephemeral:true});
+      const actual=Math.min(ms,28*86400000);
+      const reason=i.options.getString('reason')||'No reason provided';
+      await target.timeout(actual,reason);
+      return i.reply({embeds:[commandEmbed('⏱️ Member timed out','Timed out '+target+' for '+formatDuration(actual)+'.',0x57f287)]});
+    }
+
+    if(i.commandName==='kick'){
+      await target.kick(i.options.getString('reason')||'No reason provided');
+      return i.reply({embeds:[commandEmbed('👢 Member kicked','Kicked '+target.user.tag+'.',0x57f287)]});
+    }
+
+    if(i.commandName==='ban'){
+      await target.ban({reason:i.options.getString('reason')||'No reason provided'});
+      return i.reply({embeds:[commandEmbed('🔨 Member banned','Banned '+target.user.tag+'.',0xed4245)]});
+    }
+
+    if(i.commandName==='lock'||i.commandName==='unlock'){
+      const locked=i.commandName==='lock';
+      await i.channel.permissionOverwrites.edit(i.guild.roles.everyone,{SendMessages:!locked});
+      return i.reply({embeds:[commandEmbed(locked?'🔒 Channel locked':'🔓 Channel unlocked',(locked?'Locked ':'Unlocked ')+i.channel+'.',0x57f287)]});
+    }
+
+    if(i.commandName==='slowmode'){
+      const seconds=i.options.getInteger('seconds');
+      await i.channel.setRateLimitPerUser(seconds);
+      return i.reply({embeds:[commandEmbed('🐢 Slowmode updated','Slowmode set to '+seconds+'s.',0x57f287)]});
+    }
+
+    // These commands are handled by moderation-preload.js.
+    if(['modpanel','modstats','history','why','channelmode'].includes(i.commandName))return;
+
+  }catch(e){await replyError(e);}
 });
 
 client.login(process.env.DISCORD_TOKEN).then(()=>console.log('Discord login successful')).catch(e=>{console.error('Discord login failed:',e?.message||e);process.exit(1);});
