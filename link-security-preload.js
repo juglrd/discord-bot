@@ -24,7 +24,7 @@ const SHORTENER_HOSTS = new Set([
 ]);
 
 function load(){try{return JSON.parse(fs.readFileSync(DATA_FILE,'utf8'));}catch{return {};}}
-const data=load();
+const data=globalThis.__juglrdBotSettings ??= load();
 function cfg(gid){if(!data[gid])data[gid]={};return data[gid];}
 function isMod(member){return !!(member?.permissions?.has(PermissionsBitField.Flags.ManageGuild)||member?.permissions?.has(PermissionsBitField.Flags.ManageMessages)||member?.permissions?.has(PermissionsBitField.Flags.Administrator));}
 function urlsFromText(text=''){
