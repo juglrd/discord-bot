@@ -71,7 +71,12 @@ const slashCommands=[
  new SlashCommandBuilder().setName('unlock').setDescription('Unlock current channel'),
  new SlashCommandBuilder().setName('slowmode').setDescription('Set slowmode').addIntegerOption(o=>o.setName('seconds').setDescription('0-21600').setMinValue(0).setMaxValue(21600).setRequired(true)),
  new SlashCommandBuilder().setName('antiinvite').setDescription('Toggle invite blocking').addStringOption(o=>o.setName('state').setDescription('on/off').setRequired(true).addChoices({name:'on',value:'on'},{name:'off',value:'off'})),
- new SlashCommandBuilder().setName('antispam').setDescription('Toggle anti-spam').addStringOption(o=>o.setName('state').setDescription('on/off').setRequired(true).addChoices({name:'on',value:'on'},{name:'off',value:'off'}))
+ new SlashCommandBuilder().setName('antispam').setDescription('Toggle anti-spam').addStringOption(o=>o.setName('state').setDescription('on/off').setRequired(true).addChoices({name:'on',value:'on'},{name:'off',value:'off'})),
+ new SlashCommandBuilder().setName('modpanel').setDescription('Open moderation dashboard'),
+ new SlashCommandBuilder().setName('modstats').setDescription('Show moderation statistics'),
+ new SlashCommandBuilder().setName('history').setDescription('Show a member moderation history').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
+ new SlashCommandBuilder().setName('why').setDescription('Explain recent moderation detections').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
+ new SlashCommandBuilder().setName('channelmode').setDescription('Set detection mode for this channel').addStringOption(o=>o.setName('mode').setDescription('Detection mode').setRequired(true).addChoices({name:'normal',value:'normal'},{name:'strict',value:'strict'},{name:'media',value:'media'},{name:'off',value:'off'}))
 ].map(c=>c.toJSON());
 
 client.once('ready',async()=>{console.log(`Logged in as ${client.user.tag}`);try{await client.application.commands.set(slashCommands);console.log('Slash commands registered.');}catch(e){console.error('Slash command registration failed:',e.message);}});
@@ -83,6 +88,7 @@ client.on('interactionCreate',async i=>{
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
   try{
     await interactionLog(i,i.commandName,[]);
+    if(['modpanel','modstats','history','why','channelmode'].includes(i.commandName)){if(!isMod(i.member))return i.reply({embeds:[commandEmbed('🔒 Permission denied','Moderator permission required.',0xed4245)],ephemeral:true});if(i.commandName==='modpanel')return i.reply({embeds:[new EmbedBuilder().setTitle('🛡️ Moderation dashboard').setDescription('Use modstats, history, and why for moderation information.').setColor(0x5865f2)],ephemeral:true});if(i.commandName==='modstats')return i.reply({embeds:[new EmbedBuilder().setTitle('📊 Moderation statistics').setDescription('Live moderation counters are maintained by the moderation engine.').setColor(0x5865f2)],ephemeral:true});const user=i.options.getUser('user');if(i.commandName==='history'||i.commandName==='why')return i.reply({embeds:[new EmbedBuilder().setTitle(i.commandName==='history'?'🛡️ Moderation History':'🔎 Why').setDescription('Use the moderation engine history for recent detections.').setColor(0x5865f2)],ephemeral:true});const mode=i.options.getString('mode');const c=getConfig(i.guild.id);c.channelModes=c.channelModes||{};c.channelModes[i.channel.id]=mode;saveData();return i.reply({embeds:[commandEmbed('⚙️ Channel detection mode',i.channel+' is now **'+mode+'**.',0x57f287)],ephemeral:true});}
     if(filterCommands.includes(i.commandName)&&!canManageServer(i.member))return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Manage Server** to use this command.',0xed4245)],ephemeral:true});
     if(moderationCommands.includes(i.commandName)&&!canBan(i.member))return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Ban Members** to use moderation commands.',0xed4245)],ephemeral:true});
     if(i.commandName==='prefix'){
