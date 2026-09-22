@@ -48,8 +48,7 @@ function collectionHas(value,id){
   if(Array.isArray(value))return value.includes(id);
   return false;
 }
-function regexEscape(value=''){return String(value).replace(/[.*+?^${}()|[\]\\]/g,'\\function put(k,result){cache.set(k,{result,time:Date.now()});if(cache.size>500)cache.delete(cache.keys().next().value);}
-');}
+function regexEscape(value=''){return String(value).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
 function keywordMatches(text,keyword){
   const t=String(text||''), k=String(keyword||'').trim();
   if(!k)return false;
