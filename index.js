@@ -85,14 +85,13 @@ function skullboardEmbed(guild,viewerId){
   }):['No skulls have been recorded yet.'];
   const position=viewerId?(raw.findIndex(x=>x.uid===viewerId)+1):0;
   const posText=position>0
-    ?'Your Position: **#'+position+'** ('+fmt(raw[position-1].count)+' skull'+(raw[position-1].count===1?'':'s')+')'
+    ?'Your Position: #'+position+' ('+fmt(raw[position-1].count)+' skull'+(raw[position-1].count===1?'':'s')+')'
     :'Your Position: **Unranked**';
   return new EmbedBuilder()
     .setTitle('💀 Skull Leaderboard')
     .setDescription('Users with the most skulls received on their messages.\n\n'+lines.join('\n'))
     .setColor(0x2b2d31)
-    .setFooter({text:posText+' • Top 15'})
-    .setTimestamp();
+    .setFooter({text:posText});
 }
 async function commandLog(message,name,args,result='used'){
   const cfg=getConfig(message.guild.id);
