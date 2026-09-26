@@ -8,6 +8,7 @@ import sharp from 'sharp';
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 0 }) : null;
 const DATA_FILE = './settings.json';
 const DEFAULTS = { prefix: "'", nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, channelModes: {}, history: {} };
+function spamFingerprint(text=''){return norm(text).replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,' ').trim();}
 const cache = new Map(), userRate = new Map(), spam = new Map(), mentionSpam = new Map(), imageSpam = new Map(), repeatedSpam = new Map(), activeSpam = new Map(), automodRules = new Map(), historyRuntime = new Map(), imageFingerprints = new Map(), dashboard = new Map(), queue = [];
 let active = 0;
 const MAX_CONCURRENCY=1, USER_WINDOW=10000, USER_LIMIT=8, FLOOD_WINDOW=10000, FLOOD_LIMIT=15, MENTION_WINDOW=8000, MENTION_LIMIT=6, IMAGE_WINDOW=10000, IMAGE_LIMIT=6, MAX_QUEUE=100;
@@ -22,7 +23,6 @@ function addHistory(gid,uid,item){const c=cfg(gid),a=c.history[uid]||[];a.push({
 function addEvent(gid,cid,type){const d=dashboard.get(gid)||{};d.byType=d.byType||{};d.byType[type]=(d.byType[type]||0)+1;d.byChannel=d.byChannel||{};d.byChannel[cid]=(d.byChannel[cid]||0)+1;dashboard.set(gid,d);}
 function mod(member){return !!(member?.permissions.has(PermissionsBitField.Flags.ManageGuild)||member?.permissions.has(PermissionsBitField.Flags.ManageMessages)||member?.permissions.has(PermissionsBitField.Flags.Administrator));}
 function norm(s=''){return s.normalize('NFKC').toLowerCase().replace(/[\u200B-\u200D\uFEFF]/g,'').replace(/[@4]/g,'a').replace(/3/g,'e').replace(/[1!]/g,'i').replace(/0/g,'o').replace(/5/g,'s').replace(/7/g,'t').replace(/\s+/g,' ').trim();}
-function spamFingerprint(text=''){return norm(text).replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,' ').trim();}
 function redact(s=''){return s.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,'[email redacted]').replace(/\b(?:https?:\/\/)?(?:\d{1,3}\.){3}\d{1,3}\b/g,'[IP redacted]').replace(/\b(?:\d{1,5}\s+)?[A-Za-z0-9.'-]+\s+(?:street|st|road|rd|avenue|ave|lane|ln|drive|dr|close|court|ct|way|boulevard|blvd)\b[^,\n]{0,80}/gi,'[address redacted]');}
 function preview(s=''){return redact(s).slice(0,700).replace(/`/g,'ˋ');}
 function attachmentSummary(attachments=[]){return attachments.length?attachments.slice(0,8).map(a=>`\`${a.name||'attachment'}\` (${a.contentType||'unknown'})`).join(', '):'[none]';}
