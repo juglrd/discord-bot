@@ -233,7 +233,11 @@ client.on('interactionCreate',async i=>{
     if(!handledCommands.has(i.commandName))return i.reply({embeds:[commandEmbed('❌ Command unavailable','Unrecognized slash command.',0xed4245)],ephemeral:true}).catch(()=>{});
     interactionLog(i,i.commandName).catch(()=>{});
 
-    if(i.commandName==='skullboard')return i.reply({embeds:[await skullboardEmbed(i.guild,i.user.id)],allowedMentions:{users:[]}});
+    if(i.commandName==='skullboard'){
+      await i.deferReply();
+      const embed=await skullboardEmbed(i.guild,i.user.id);
+      return i.editReply({embeds:[embed],allowedMentions:{users:[]}});
+    }
 
     if(i.commandName==='addskulls'){
       if(!commandGuard.canControl(i.member))return i.reply({content:"❌ Only the server's top 2 roles can use this command.",ephemeral:true});
