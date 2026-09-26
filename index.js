@@ -58,7 +58,7 @@ async function interactionLog(interaction,name,result='used'){
 function prefixFor(guildId){ return getConfig(guildId).prefix || DEFAULT_PREFIX; }
 function parseDuration(input){ const m=String(input||'').match(/^(\d+)(s|m|h|d)$/i); return m ? Number(m[1])*({s:1000,m:60000,h:3600000,d:86400000}[m[2].toLowerCase()]) : null; }
 function formatDuration(ms){ for(const [u,v] of [['d',86400000],['h',3600000],['m',60000],['s',1000]]) if(ms>=v)return `${Math.round(ms/v)}${u}`; return '0s'; }
-function helpText(prefix){ return `**Moderation commands**\n\`${prefix}help\` • commands\n\`${prefix}nsfw on/off\` • NSFW filter\n\`${prefix}gore on/off\` • gore filter\n\`${prefix}pii on/off\` • redact emails/IPs/addresses\n\`${prefix}prefix <new>\` • change prefix\n\`${prefix}setlogs #channel\` • audit logs\n\`${prefix}config\` • protection settings\n\`${prefix}warn @user [reason]\`\n\`${prefix}warnings @user\`\n\`${prefix}clearwarnings @user\`\n\`${prefix}timeout @user 10m [reason]\`\n\`${prefix}kick @user [reason]\`\n\`${prefix}ban @user [reason]\`\n\`${prefix}lock\` / \`${prefix}unlock\`\n\`${prefix}slowmode 10\`\n\`${prefix}antiinvite on/off\`\n\`${prefix}antispam on/off\`\n\`${prefix}skulls [@user]\` • skull count`; }
+function helpText(prefix){ return `**Moderation commands**\n\`${prefix}help\` • commands\n\`${prefix}nsfw on/off\` • NSFW filter\n\`${prefix}gore on/off\` • gore filter\n\`${prefix}pii on/off\` • redact emails/IPs/addresses\n\`${prefix}prefix <new>\` • change prefix\n\`${prefix}setlogs #channel\` • audit logs\n\`${prefix}config\` • protection settings\n\`${prefix}warn @user [reason]\`\n\`${prefix}warnings @user\`\n\`${prefix}clearwarnings @user\`\n\`${prefix}timeout @user 10m [reason]\`\n\`${prefix}kick @user [reason]\`\n\`${prefix}ban @user [reason]\`\n\`${prefix}lock\` / \`${prefix}unlock\`\n\`${prefix}slowmode 10\`\n\`${prefix}antiinvite on/off\`\n\`${prefix}antispam on/off\`\n`/skulls [user]` • skull count`; }
 async function executeCommand(message,name,args){
   const cfg=getConfig(message.guild.id), prefix=cfg.prefix||DEFAULT_PREFIX;
   const filterCommands=['prefix','nsfw','gore','pii','setlogs','config','antiinvite','antispam'];
@@ -70,11 +70,6 @@ async function executeCommand(message,name,args){
   if(name==='prefix'){ const next=args[0]; if(!next||next.length>3||/\s/.test(next)||next.startsWith('/')) return message.reply({embeds:[commandEmbed('⚙️ Prefix','Usage: `'+prefix+'prefix <1-3 non-space characters>`',0xed4245)]}); cfg.prefix=next; saveData(); return message.reply({embeds:[commandEmbed('⚙️ Prefix changed','Prefix is now `'+next+'`. Use `'+next+'help` for commands.',0x57f287)]}); }
   if(['nsfw','gore','pii','antiinvite','antispam'].includes(name)){ const value=args[0]?.toLowerCase(); if(!['on','off'].includes(value)) return message.reply({embeds:[commandEmbed('⚙️ Invalid option','Usage: `'+prefix+name+' on/off`',0xed4245)]}); const key=name==='nsfw'?'nsfwFilter':name==='gore'?'goreFilter':name; cfg[key]=value==='on'; saveData(); return message.reply({embeds:[commandEmbed('🛡️ Filter updated',`**${name.toUpperCase()}** is now **${value}**.`,0x57f287)]}); }
   if(name==='setlogs'){ const ch=message.mentions.channels.first(); if(!ch||ch.type!==ChannelType.GuildText)return message.reply({embeds:[commandEmbed('📋 Audit logs','Usage: `'+prefix+'setlogs #channel`',0xed4245)]}); cfg.auditChannelId=ch.id; saveData(); return message.reply({embeds:[commandEmbed('📋 Audit logs enabled',`Commands and moderation events will be logged to ${ch}.`,0x57f287)]}); }
-  if(name==='skulls'){
-    const target=message.mentions.members.first()||message.member;
-    const count=getSkulls(message.guild.id,target.id);
-    return message.reply(target+' you have **'+count+'** skull'+(count===1?'':'s')+' 💀');
-  }
   if(name==='config') return message.reply({embeds:[new EmbedBuilder().setTitle('🛡️ Server protection').setColor(0x5865f2).setTimestamp().addFields({name:'Prefix',value:`\`${prefix}\``,inline:true},{name:'NSFW',value:cfg.nsfwFilter?'🟢 On':'🔴 Off',inline:true},{name:'Gore',value:cfg.goreFilter?'🟢 On':'🔴 Off',inline:true},{name:'PII',value:cfg.piiFilter?'🟢 On':'🔴 Off',inline:true},{name:'Anti-spam/flood',value:cfg.antiSpam?'🟢 On':'🔴 Off',inline:true},{name:'Anti-invite',value:cfg.antiInvite?'🟢 On':'🔴 Off',inline:true})]});
   const target=message.mentions.members.first();
   if(['warn','warnings','clearwarnings','timeout','kick','ban'].includes(name)&&!target)return message.reply({embeds:[commandEmbed('❌ Missing member','Mention a member. Example: `'+prefix+name+' @user`',0xed4245)]});
@@ -112,6 +107,7 @@ const slashCommands=[
  new SlashCommandBuilder().setName('history').setDescription('Show a member moderation history').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
  new SlashCommandBuilder().setName('why').setDescription('Explain recent moderation detections').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
  new SlashCommandBuilder().setName('strike').setDescription('Give a 30-day staff strike').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild).addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason').setRequired(true)),
+ new SlashCommandBuilder().setName('skulls').setDescription('Show skull count').addUserOption(o=>o.setName('user').setDescription('User to check').setRequired(false)),
  new SlashCommandBuilder().setName('skullboard').setDescription('Show the top 10 skulls'),
  new SlashCommandBuilder().setName('addskulls').setDescription('Add skulls to a user').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild).addUserOption(o=>o.setName('user').setDescription('User receiving skulls').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount to add').setMinValue(1).setMaxValue(100000).setRequired(true)),
  new SlashCommandBuilder().setName('removeskulls').setDescription('Remove skulls from a user').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild).addUserOption(o=>o.setName('user').setDescription('User losing skulls').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount to remove').setMinValue(1).setMaxValue(100000).setRequired(true)),
@@ -129,7 +125,7 @@ client.on('interactionCreate',async i=>{
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
   const advancedCommands=['modpanel','modstats','history','why','channelmode'];
   if(advancedCommands.includes(i.commandName))return;
-  const handledCommands=new Set(['help','strike','skullboard','addskulls','removeskulls',...filterCommands,...moderationCommands]);
+  const handledCommands=new Set(['help','strike','skulls','skullboard','addskulls','removeskulls',...filterCommands,...moderationCommands]);
   const replyError=async e=>{
     console.error('Interaction failed:',e?.stack||e?.message||e);
     if(!i.replied&&!i.deferred)await i.reply({embeds:[commandEmbed('❌ Error','Something went wrong.',0xed4245)],ephemeral:true}).catch(()=>{});
@@ -148,6 +144,14 @@ client.on('interactionCreate',async i=>{
     if(!i.isChatInputCommand())return;
     if(!handledCommands.has(i.commandName))return i.reply({embeds:[commandEmbed('❌ Command unavailable','Unrecognized slash command.',0xed4245)],ephemeral:true}).catch(()=>{});
     await interactionLog(i,i.commandName);
+
+    if(i.commandName==='skulls'){
+      const targetUser=i.options.getUser('user')||i.user;
+      const target=await i.guild.members.fetch(targetUser.id).catch(()=>null);
+      const display=target||targetUser;
+      const count=getSkulls(i.guild.id,targetUser.id);
+      return i.reply({content:display+' you have **'+count+'** skull'+(count===1?'':'s')+' 💀'});
+    }
 
     if(i.commandName==='skullboard')return i.reply({embeds:[skullboardEmbed(i.guild.id)]});
 
