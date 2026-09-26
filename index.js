@@ -143,15 +143,16 @@ client.on('interactionCreate',async i=>{
     }
     if(!i.isChatInputCommand())return;
     if(!handledCommands.has(i.commandName))return i.reply({embeds:[commandEmbed('❌ Command unavailable','Unrecognized slash command.',0xed4245)],ephemeral:true}).catch(()=>{});
-    await interactionLog(i,i.commandName);
-
     if(i.commandName==='skulls'){
       const targetUser=i.options.getUser('user')||i.user;
-      const target=await i.guild.members.fetch(targetUser.id).catch(()=>null);
-      const display=target||targetUser;
       const count=getSkulls(i.guild.id,targetUser.id);
-      return i.reply({content:display+' you have **'+count+'** skull'+(count===1?'':'s')+' 💀'});
+      const response=targetUser+' you have **'+count+'** skull'+(count===1?'':'s')+' 💀';
+      await i.reply({content:response});
+      interactionLog(i,i.commandName).catch(()=>{});
+      return;
     }
+
+    interactionLog(i,i.commandName).catch(()=>{});
 
     if(i.commandName==='skullboard')return i.reply({embeds:[skullboardEmbed(i.guild.id)]});
 
