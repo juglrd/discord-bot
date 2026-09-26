@@ -46,9 +46,9 @@ function warningEmbed(target,reason,moderator){
 }
 function strikeRecord(gid,uid){const c=getConfig(gid);if(!c.strikes[uid])c.strikes[uid]={items:[],history:[],channelId:null,messageId:null,appealThreadId:null};const r=c.strikes[uid];if(!Array.isArray(r.items))r.items=[];if(!Array.isArray(r.history))r.history=[];return r;}
 function cleanActiveStrikes(gid,uid){const r=strikeRecord(gid,uid),now=Date.now(),active=[];for(const s of r.items){if(new Date(s.expiresAt).getTime()>now)active.push(s);else if(!r.history.some(x=>x.id===s.id))r.history.push({...s,status:'expired',expiredAt:s.expiresAt});}r.items=active;if(!active.length){r.channelId=null;r.messageId=null;r.appealThreadId=null;}saveData();return {record:r,active};}
-function strikeEmbed(target,active){let lines=active.map((s,n)=>{const ts=Math.floor(new Date(s.createdAt).getTime()/1000);return '> **'+(n+1)+'.** <t:'+ts+':d>: '+s.reason;}).join('\n')||'> No active strikes.';return new EmbedBuilder().setAuthor({name:target.user.username,iconURL:target.user.displayAvatarURL({size:128})}).setTitle('☆ • Staff Strikeboard • ☆').setColor(0x2b2d31).setDescription('If you believe your strike was given falsely, you may appeal by clicking the button below.\n(Otherwise, you can wait until the strike expires after 30 days.)\n\n'+target+' ('+active.length+' strike'+(active.length===1?'':'s')+'⚠️)\n\n'+lines).setTimestamp();}
+function strikeEmbed(target,active){let lines=active.map((s,n)=>{const ts=Math.floor(new Date(s.createdAt).getTime()/1000);return '> **'+(n+1)+'.** <t:'+ts+':d>: '+s.reason;}).join('\\n')||'> No active strikes.';return new EmbedBuilder().setAuthor({name:target.user.username,iconURL:target.user.displayAvatarURL({size:128})}).setTitle('☆ • Staff Strikeboard • ☆').setColor(0x2b2d31).setDescription('If you believe your strike was given falsely, you may appeal by clicking the button below.\\n(Otherwise, you can wait until the strike expires after 30 days.)\\n\\n'+userMention(target.id)+' ('+active.length+' strike'+(active.length===1?'':'s')+'⚠️)\\n\\n'+lines).setTimestamp();}
 function strikeAppealRow(uid){return new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(STRIKE_APPEAL_PREFIX+uid).setLabel('Create Appeal Thread').setStyle(ButtonStyle.Primary));}
-async function updateStrikeBoard(guild,uid){const {record,active}=cleanActiveStrikes(guild.id,uid);if(!record.messageId||!record.channelId)return;const ch=await guild.channels.fetch(record.channelId).catch(()=>null);const msg=ch?.isTextBased()?await ch.messages.fetch(record.messageId).catch(()=>null):null;if(!msg)return;if(!active.length){await msg.delete().catch(()=>{});record.messageId=null;record.channelId=null;record.appealThreadId=null;saveData();return;}const member=await guild.members.fetch(uid).catch(()=>null);if(!member)return;await msg.edit({embeds:[strikeEmbed(member,active)],components:[strikeAppealRow(uid)]}).catch(()=>{});}
+async function updateStrikeBoard(guild,uid){const {record,active}=cleanActiveStrikes(guild.id,uid);if(!record.messageId||!record.channelId)return;const ch=await guild.channels.fetch(record.channelId).catch(()=>null);const msg=ch?.isTextBased()?await ch.messages.fetch(record.messageId).catch(()=>null):null;if(!msg)return;if(!active.length){await msg.delete().catch(()=>{});record.messageId=null;record.channelId=null;record.appealThreadId=null;saveData();return;}const member=await guild.members.fetch(uid).catch(()=>null);if(!member)return;await msg.edit({embeds:[strikeEmbed(member,active)],components:[strikeAppealRow(uid)],allowedMentions:{users:[uid]}}).catch(()=>{});}
 async function cleanupExpiredStrikes(){for(const guild of client.guilds.cache.values()){const c=getConfig(guild.id);for(const uid of Object.keys(c.strikes||{})){const before=strikeRecord(guild.id,uid).items.length;cleanActiveStrikes(guild.id,uid);const after=strikeRecord(guild.id,uid).items.length;if(after<before)await updateStrikeBoard(guild,uid).catch(()=>{});}}saveData();}
 
 function isSkullReaction(reaction){const name=reaction.emoji?.name;return name==='💀'||String(name||'').toLowerCase()==='skull';}
@@ -386,12 +386,33 @@ client.on('interactionCreate',async i=>{
       const now=new Date();
       state.active.push({id:Date.now()+'-'+i.id,reason,moderatorId:i.user.id,createdAt:now.toISOString(),expiresAt:new Date(now.getTime()+STRIKE_DURATION_MS).toISOString()});
       state.record.items=state.active;
-      let boardChannel=await i.guild.channels.fetch(cfg.strikeChannelId||i.channelId).catch(()=>null);
-      if(!boardChannel?.isTextBased())boardChannel=i.channel;
-      let updated=false;
-      if(state.record.messageId&&state.record.channelId===boardChannel.id){
-        const msg=await boardChannel.messages.fetch(state.record.messageId).catch(()=>null);
-        if(msg){await msg.edit({embeds:[strikeEmbed(target,state.active)],components:[strikeAppealRow(target.id)]});updated=true;}
+      // Keep one strikeboard message per member. If a board message already exists,
+      // edit that exact message so all active strikes stay together on one message.
+      let boardChannel=null;
+      let boardMessage=null;
+      if(state.record.messageId&&state.record.channelId){
+        boardChannel=await i.guild.channels.fetch(state.record.channelId).catch(()=>null);
+        if(boardChannel?.isTextBased()){
+          boardMessage=await boardChannel.messages.fetch(state.record.messageId).catch(()=>null);
+        }
+      }
+      if(boardMessage){
+        await boardMessage.edit({
+          embeds:[strikeEmbed(target,state.active)],
+          components:[strikeAppealRow(target.id)],
+          allowedMentions:{users:[target.id]}
+        });
+      }else{
+        boardChannel=await i.guild.channels.fetch(cfg.strikeChannelId||i.channelId).catch(()=>null);
+        if(!boardChannel?.isTextBased())boardChannel=i.channel;
+        const board=await boardChannel.send({
+          embeds:[strikeEmbed(target,state.active)],
+          components:[strikeAppealRow(target.id)],
+          allowedMentions:{users:[target.id]}
+        });
+        state.record.channelId=boardChannel.id;
+        state.record.messageId=board.id;
+        state.record.appealThreadId=null;
       }
       if(!updated){
         const board=await boardChannel.send({embeds:[strikeEmbed(target,state.active)],components:[strikeAppealRow(target.id)]});
