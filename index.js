@@ -82,6 +82,21 @@ async function executeCommand(message,name,args){
   await commandLog(message,name,args);
   if(filterCommands.includes(name)&&!canManageServer(message.member)) return message.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Manage Server** to use this command.',0xed4245)]});
   if(moderationCommands.includes(name)&&!canBan(message.member)) return message.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Ban Members** to use moderation commands.',0xed4245)]});
+  if(name==='blacklist'){
+    if(!commandGuard.canControl(message.member)) return message.reply({embeds:[commandEmbed('🔒 Permission denied',"Only the server's top 2 roles can use the command blacklist.",0xed4245)]});
+    const action=args[0]?.toLowerCase();
+    const target=message.mentions.users.first();
+    if(!['add','remove'].includes(action)||!target) return message.reply({embeds:[commandEmbed('📛 Command blacklist','Usage: /blacklist add @user or /blacklist remove @user',0xed4245)]});
+    if(target.bot) return message.reply({embeds:[commandEmbed('📛 Command blacklist','Bot accounts cannot be command blacklisted.',0xed4245)]});
+    if(action==='add'){
+      cfg.commandBlacklist[target.id]={by:message.author.id,at:new Date().toISOString()};
+      saveData();
+      return message.reply({embeds:[commandEmbed('📛 Command blacklist','<@'+target.id+'> can no longer use this bot\'s commands.',0xed4245)]});
+    }
+    delete cfg.commandBlacklist[target.id];
+    saveData();
+    return message.reply({embeds:[commandEmbed('✅ Command access restored','<@'+target.id+'> can use this bot\'s commands again.',0x57f287)]});
+  }
   if(name==='help') return message.reply({embeds:[commandEmbed('📖 Commands',helpText(prefix))]});
   if(name==='prefix'){ const next=args[0]; if(!next||next.length>3||/\s/.test(next)||next.startsWith('/')) return message.reply({embeds:[commandEmbed('⚙️ Prefix','Usage: `'+prefix+'prefix <1-3 non-space characters>`',0xed4245)]}); cfg.prefix=next; saveData(); return message.reply({embeds:[commandEmbed('⚙️ Prefix changed','Prefix is now `'+next+'`. Use `'+next+'help` for commands.',0x57f287)]}); }
   if(['nsfw','gore','pii','antiinvite','antispam'].includes(name)){ const value=args[0]?.toLowerCase(); if(!['on','off'].includes(value)) return message.reply({embeds:[commandEmbed('⚙️ Invalid option','Usage: `'+prefix+name+' on/off`',0xed4245)]}); const key=name==='nsfw'?'nsfwFilter':name==='gore'?'goreFilter':name; cfg[key]=value==='on'; saveData(); return message.reply({embeds:[commandEmbed('🛡️ Filter updated',`**${name.toUpperCase()}** is now **${value}**.`,0x57f287)]}); }
@@ -127,15 +142,18 @@ const slashCommands=[
  new SlashCommandBuilder().setName('skullboard').setDescription('Show the top 10 skulls'),
  new SlashCommandBuilder().setName('addskulls').setDescription('Add skulls to a user').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild).addUserOption(o=>o.setName('user').setDescription('User receiving skulls').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount to add').setMinValue(1).setMaxValue(100000).setRequired(true)),
  new SlashCommandBuilder().setName('removeskulls').setDescription('Remove skulls from a user').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild).addUserOption(o=>o.setName('user').setDescription('User losing skulls').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount to remove').setMinValue(1).setMaxValue(100000).setRequired(true)),
+ new SlashCommandBuilder().setName('blacklist').setDescription("Block or unblock a user from using this bot's commands").addSubcommand(s=>s.setName('add').setDescription('Block a user').addUserOption(o=>o.setName('user').setDescription('User to block').setRequired(true))).addSubcommand(s=>s.setName('remove').setDescription('Allow a user again').addUserOption(o=>o.setName('user').setDescription('User to unblock').setRequired(true))),
  new SlashCommandBuilder().setName('channelmode').setDescription('Set detection mode for this channel').addStringOption(o=>o.setName('mode').setDescription('Detection mode').setRequired(true).addChoices({name:'normal',value:'normal'},{name:'strict',value:'strict'},{name:'media',value:'media'},{name:'off',value:'off'}))
 ].map(c=>c.toJSON());
 
 client.once('ready',async()=>{console.log(`Logged in as ${client.user.tag}`); await cleanupExpiredStrikes(); setInterval(()=>cleanupExpiredStrikes().catch(e=>console.error('Strike cleanup failed:',e?.message||e)),60000);try{await client.application.commands.set([]);console.log('Global slash commands cleared');for(const guild of client.guilds.cache.values()){try{const registered=await guild.commands.set(slashCommands);console.log(`Guild slash commands registered in ${guild.id}: ${registered.size}`);}catch(e){console.error(`Guild slash command registration failed in ${guild.id}:`,e?.message||e);}}}catch(e){console.error('Slash command registration failed:',e?.stack||e?.message||e);}});
-client.on('messageCreate',async message=>{if(!message.inGuild()||message.author.bot)return;const cfg=getConfig(message.guild.id);try{const prefix=cfg.prefix||DEFAULT_PREFIX;if(message.content.startsWith(prefix)){const parts=message.content.slice(prefix.length).trim().split(/\s+/);const name=parts.shift()?.toLowerCase();if(name)await executeCommand(message,name,parts).catch(e=>console.error('Prefix command failed:',e?.message||e));}}catch(e){console.error('Message handler failed:',e?.message||e);}});
+client.on('messageCreate',async message=>{if(!message.inGuild()||message.author.bot)return;const cfg=getConfig(message.guild.id);try{const prefix=cfg.prefix||DEFAULT_PREFIX;if(message.content.startsWith(prefix)){if(commandGuard.isBlacklisted(message.guild.id,message.author.id))return message.reply({content:"❌ You are command blacklisted and cannot use this bot's commands."}).catch(()=>{});const parts=message.content.slice(prefix.length).trim().split(/\s+/);const name=parts.shift()?.toLowerCase();if(name)await executeCommand(message,name,parts).catch(e=>console.error('Prefix command failed:',e?.message||e));}}catch(e){console.error('Message handler failed:',e?.message||e);}});
 client.on('messageReactionAdd',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author||message.author.bot)return;changeSkulls(message.guild.id,message.author.id,1);}catch(e){console.error('Skull reaction add failed:',e?.message||e);}});
 client.on('messageReactionRemove',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author||message.author.bot)return;changeSkulls(message.guild.id,message.author.id,-1);}catch(e){console.error('Skull reaction remove failed:',e?.message||e);}});
 client.on('interactionCreate',async i=>{
   if(!i.inGuild())return;
+
+  if(i.isChatInputCommand()&&i.commandName!=='blacklist'&&commandGuard.isBlacklisted(i.guild.id,i.user.id))return i.reply({content:"❌ You are command blacklisted and cannot use this bot's commands.",ephemeral:true}).catch(()=>{});
 
   // Handle /skulls before config, logging, or member fetches.
   if(i.isChatInputCommand()&&i.commandName==='skulls'){
