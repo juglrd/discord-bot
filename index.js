@@ -1,18 +1,20 @@
 import 'dotenv/config';
 import fs from 'node:fs';
-import { Client, GatewayIntentBits, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ChannelType } from 'discord.js';
+import { Client, GatewayIntentBits, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 
 if (!process.env.DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in environment variables.'); process.exit(1); }
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers] });
 const DATA_FILE = './settings.json';
 const DEFAULT_PREFIX = "'";
-const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {} };
+const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, strikes: {} };
+const STRIKE_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+const STRIKE_APPEAL_PREFIX = 'strike_appeal:';
 
 function loadData(){ try { return JSON.parse(fs.readFileSync(DATA_FILE,'utf8')); } catch { return {}; } }
 const data = globalThis.__juglrdBotSettings ??= loadData();
 function saveData(){ try { fs.writeFileSync(DATA_FILE, JSON.stringify(data,null,2)); } catch(e) { console.error('Could not save settings:', e.message); } }
-function getConfig(guildId){ if(!data[guildId]) data[guildId]=structuredClone(DEFAULTS); data[guildId]={...DEFAULTS,...data[guildId],warnings:data[guildId].warnings||{}}; if(typeof data[guildId].prefix!=='string'||!data[guildId].prefix)data[guildId].prefix=DEFAULT_PREFIX; return data[guildId]; }
+function getConfig(guildId){ if(!data[guildId]) data[guildId]=structuredClone(DEFAULTS); data[guildId]={...DEFAULTS,...data[guildId],warnings:data[guildId].warnings||{},strikes:data[guildId].strikes&&typeof data[guildId].strikes==='object'?data[guildId].strikes:{}}; if(typeof data[guildId].prefix!=='string'||!data[guildId].prefix)data[guildId].prefix=DEFAULT_PREFIX; return data[guildId]; }
 function isMod(member){ return !!(member?.permissions.has(PermissionsBitField.Flags.ManageGuild)||member?.permissions.has(PermissionsBitField.Flags.ManageMessages)||member?.permissions.has(PermissionsBitField.Flags.Administrator)); }
 function canBan(member){ return !!member?.permissions.has(PermissionsBitField.Flags.BanMembers); }
 function canManageServer(member){ return !!member?.permissions.has(PermissionsBitField.Flags.ManageGuild); }
@@ -26,6 +28,13 @@ function warningEmbed(target,reason,moderator){
     .setDescription('> You have successfully warned '+target+'\n> **Reason:** `'+safeReason+'`\n\nDuration: **Indefinite** | By: **'+moderator.username+'**')
     .setTimestamp();
 }
+function strikeRecord(gid,uid){const c=getConfig(gid);if(!c.strikes[uid])c.strikes[uid]={items:[],channelId:null,messageId:null};const r=c.strikes[uid];if(!Array.isArray(r.items))r.items=[];return r;}
+function cleanActiveStrikes(gid,uid){const r=strikeRecord(gid,uid),now=Date.now(),active=r.items.filter(s=>new Date(s.expiresAt).getTime()>now);if(active.length!==r.items.length){r.items=active;saveData();}if(!active.length){r.channelId=null;r.messageId=null;}return {record:r,active};}
+function strikeEmbed(target,active){let lines=active.map((s,n)=>{const ts=Math.floor(new Date(s.createdAt).getTime()/1000);return '> **'+(n+1)+'.** <t:'+ts+':d>: '+s.reason;}).join('\n')||'> No active strikes.';return new EmbedBuilder().setAuthor({name:target.user.username,iconURL:target.user.displayAvatarURL({size:128})}).setTitle('☆ • Staff Strikeboard • ☆').setColor(0x2b2d31).setDescription('If you believe your strike was given falsely, you may appeal by clicking the button below.\n(Otherwise, you can wait until the strike expires after 30 days.)\n\n'+target+' ('+active.length+' strike'+(active.length===1?'':'s')+'⚠️)\n\n'+lines).setTimestamp();}
+function strikeAppealRow(uid){return new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(STRIKE_APPEAL_PREFIX+uid).setLabel('Create Appeal Thread').setStyle(ButtonStyle.Primary));}
+async function updateStrikeBoard(guild,uid){const {record,active}=cleanActiveStrikes(guild.id,uid);if(!record.messageId||!record.channelId)return;const ch=await guild.channels.fetch(record.channelId).catch(()=>null);const msg=ch?.isTextBased()?await ch.messages.fetch(record.messageId).catch(()=>null):null;if(!msg)return;if(!active.length){await msg.delete().catch(()=>{});delete getConfig(guild.id).strikes[uid];saveData();return;}const member=await guild.members.fetch(uid).catch(()=>null);if(!member)return;await msg.edit({embeds:[strikeEmbed(member,active)],components:[strikeAppealRow(uid)]}).catch(()=>{});}
+async function cleanupExpiredStrikes(){for(const guild of client.guilds.cache.values()){const c=getConfig(guild.id);for(const uid of Object.keys(c.strikes||{})){const before=strikeRecord(guild.id,uid).items.length;cleanActiveStrikes(guild.id,uid);const after=strikeRecord(guild.id,uid).items.length;if(after<before)await updateStrikeBoard(guild,uid).catch(()=>{});}}saveData();}
+
 async function commandLog(message,name,args,result='used'){
   const cfg=getConfig(message.guild.id);
   if(!cfg.auditChannelId)return;
