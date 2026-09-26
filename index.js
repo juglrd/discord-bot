@@ -1,10 +1,10 @@
 import 'dotenv/config';
 import fs from 'node:fs';
-import { Client, GatewayIntentBits, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 
 if (!process.env.DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in environment variables.'); process.exit(1); }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessageReactions], partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User] });
 const DATA_FILE = './settings.json';
 const DEFAULT_PREFIX = "'";
 const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, strikes: {} };
@@ -14,7 +14,7 @@ const STRIKE_APPEAL_PREFIX = 'strike_appeal:';
 function loadData(){ try { return JSON.parse(fs.readFileSync(DATA_FILE,'utf8')); } catch { return {}; } }
 const data = globalThis.__juglrdBotSettings ??= loadData();
 function saveData(){ try { fs.writeFileSync(DATA_FILE, JSON.stringify(data,null,2)); } catch(e) { console.error('Could not save settings:', e.message); } }
-function getConfig(guildId){ if(!data[guildId]) data[guildId]=structuredClone(DEFAULTS); data[guildId]={...DEFAULTS,...data[guildId],warnings:data[guildId].warnings||{},strikes:data[guildId].strikes&&typeof data[guildId].strikes==='object'?data[guildId].strikes:{}}; if(typeof data[guildId].prefix!=='string'||!data[guildId].prefix)data[guildId].prefix=DEFAULT_PREFIX; return data[guildId]; }
+function getConfig(guildId){ if(!data[guildId]) data[guildId]=structuredClone(DEFAULTS); data[guildId]={...DEFAULTS,...data[guildId],warnings:data[guildId].warnings||{},strikes:data[guildId].strikes&&typeof data[guildId].strikes==='object'?data[guildId].strikes:{},skulls:data[guildId].skulls&&typeof data[guildId].skulls==='object'?data[guildId].skulls:{}}; if(typeof data[guildId].prefix!=='string'||!data[guildId].prefix)data[guildId].prefix=DEFAULT_PREFIX; return data[guildId]; }
 function isMod(member){ return !!(member?.permissions.has(PermissionsBitField.Flags.ManageGuild)||member?.permissions.has(PermissionsBitField.Flags.ManageMessages)||member?.permissions.has(PermissionsBitField.Flags.Administrator)); }
 function canBan(member){ return !!member?.permissions.has(PermissionsBitField.Flags.BanMembers); }
 function canManageServer(member){ return !!member?.permissions.has(PermissionsBitField.Flags.ManageGuild); }
@@ -35,6 +35,11 @@ function strikeAppealRow(uid){return new ActionRowBuilder().addComponents(new Bu
 async function updateStrikeBoard(guild,uid){const {record,active}=cleanActiveStrikes(guild.id,uid);if(!record.messageId||!record.channelId)return;const ch=await guild.channels.fetch(record.channelId).catch(()=>null);const msg=ch?.isTextBased()?await ch.messages.fetch(record.messageId).catch(()=>null):null;if(!msg)return;if(!active.length){await msg.delete().catch(()=>{});delete getConfig(guild.id).strikes[uid];saveData();return;}const member=await guild.members.fetch(uid).catch(()=>null);if(!member)return;await msg.edit({embeds:[strikeEmbed(member,active)],components:[strikeAppealRow(uid)]}).catch(()=>{});}
 async function cleanupExpiredStrikes(){for(const guild of client.guilds.cache.values()){const c=getConfig(guild.id);for(const uid of Object.keys(c.strikes||{})){const before=strikeRecord(guild.id,uid).items.length;cleanActiveStrikes(guild.id,uid);const after=strikeRecord(guild.id,uid).items.length;if(after<before)await updateStrikeBoard(guild,uid).catch(()=>{});}}saveData();}
 
+function isSkullReaction(reaction){const name=reaction.emoji?.name;return name==='💀'||String(name||'').toLowerCase()==='skull';}
+function getSkulls(gid,uid){const c=getConfig(gid);return Math.max(0,Number(c.skulls[uid]||0));}
+function changeSkulls(gid,uid,amount){const c=getConfig(gid),next=Math.max(0,getSkulls(gid,uid)+amount);if(next===0)delete c.skulls[uid];else c.skulls[uid]=next;saveData();return next;}
+function skullsEmbed(user,count){return new EmbedBuilder().setColor(0x2b2d31).setDescription(user+' you have **'+count+'** skull'+(count===1?'':'s')+' 💀').setTimestamp();}
+function skullboardEmbed(gid){const entries=Object.entries(getConfig(gid).skulls).map(([uid,count])=>({uid,count:Number(count)||0})).filter(x=>x.count>0).sort((a,b)=>b.count-a.count||a.uid.localeCompare(b.uid)).slice(0,10);const lines=entries.length?entries.map((x,n)=>'**'+(n+1)+'.** <@'+x.uid+'> — **'+x.count+'** 💀'):['No skulls have been recorded yet.'];return new EmbedBuilder().setTitle('💀 Skull Leaderboard').setColor(0x2b2d31).setDescription(lines.join('\n')).setFooter({text:'Top 10 skull counts in this server.'}).setTimestamp();}
 async function commandLog(message,name,args,result='used'){
   const cfg=getConfig(message.guild.id);
   if(!cfg.auditChannelId)return;
@@ -103,11 +108,17 @@ const slashCommands=[
  new SlashCommandBuilder().setName('history').setDescription('Show a member moderation history').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
  new SlashCommandBuilder().setName('why').setDescription('Explain recent moderation detections').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
  new SlashCommandBuilder().setName('strike').setDescription('Give a 30-day staff strike').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild).addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason').setRequired(true)),
+ new SlashCommandBuilder().setName('skulls').setDescription('Show your skull count').addUserOption(o=>o.setName('user').setDescription('User to check').setRequired(false)),
+ new SlashCommandBuilder().setName('skullboard').setDescription('Show the top 10 skulls'),
+ new SlashCommandBuilder().setName('addskulls').setDescription('Add skulls to a user').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild).addUserOption(o=>o.setName('user').setDescription('User receiving skulls').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount to add').setMinValue(1).setMaxValue(100000).setRequired(true)),
+ new SlashCommandBuilder().setName('removeskulls').setDescription('Remove skulls from a user').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild).addUserOption(o=>o.setName('user').setDescription('User losing skulls').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount to remove').setMinValue(1).setMaxValue(100000).setRequired(true)),
  new SlashCommandBuilder().setName('channelmode').setDescription('Set detection mode for this channel').addStringOption(o=>o.setName('mode').setDescription('Detection mode').setRequired(true).addChoices({name:'normal',value:'normal'},{name:'strict',value:'strict'},{name:'media',value:'media'},{name:'off',value:'off'}))
 ].map(c=>c.toJSON());
 
 client.once('ready',async()=>{console.log(`Logged in as ${client.user.tag}`); await cleanupExpiredStrikes(); setInterval(()=>cleanupExpiredStrikes().catch(e=>console.error('Strike cleanup failed:',e?.message||e)),60000);try{await client.application.commands.set([]);console.log('Global slash commands cleared');for(const guild of client.guilds.cache.values()){try{const registered=await guild.commands.set(slashCommands);console.log(`Guild slash commands registered in ${guild.id}: ${registered.size}`);}catch(e){console.error(`Guild slash command registration failed in ${guild.id}:`,e?.message||e);}}}catch(e){console.error('Slash command registration failed:',e?.stack||e?.message||e);}});
 client.on('messageCreate',async message=>{if(!message.inGuild()||message.author.bot)return;const cfg=getConfig(message.guild.id);try{const prefix=cfg.prefix||DEFAULT_PREFIX;if(message.content.startsWith(prefix)){const parts=message.content.slice(prefix.length).trim().split(/\s+/);const name=parts.shift()?.toLowerCase();if(name)await executeCommand(message,name,parts).catch(e=>console.error('Prefix command failed:',e?.message||e));}}catch(e){console.error('Message handler failed:',e?.message||e);}});
+client.on('messageReactionAdd',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author)return;changeSkulls(message.guild.id,message.author.id,1);}catch(e){console.error('Skull reaction add failed:',e?.message||e);}});
+client.on('messageReactionRemove',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author)return;changeSkulls(message.guild.id,message.author.id,-1);}catch(e){console.error('Skull reaction remove failed:',e?.message||e);}});
 client.on('interactionCreate',async i=>{
   if(!i.inGuild())return;
   const cfg=getConfig(i.guild.id);
@@ -115,7 +126,7 @@ client.on('interactionCreate',async i=>{
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
   const advancedCommands=['modpanel','modstats','history','why','channelmode'];
   if(advancedCommands.includes(i.commandName))return;
-  const handledCommands=new Set(['help','strike',...filterCommands,...moderationCommands]);
+  const handledCommands=new Set(['help','strike','skulls','skullboard','addskulls','removeskulls',...filterCommands,...moderationCommands]);
   const replyError=async e=>{
     console.error('Interaction failed:',e?.stack||e?.message||e);
     if(!i.replied&&!i.deferred)await i.reply({embeds:[commandEmbed('❌ Error','Something went wrong.',0xed4245)],ephemeral:true}).catch(()=>{});
@@ -134,6 +145,27 @@ client.on('interactionCreate',async i=>{
     if(!i.isChatInputCommand())return;
     if(!handledCommands.has(i.commandName))return i.reply({embeds:[commandEmbed('❌ Command unavailable','Unrecognized slash command.',0xed4245)],ephemeral:true}).catch(()=>{});
     await interactionLog(i,i.commandName);
+
+    if(i.commandName==='skulls'){
+      const target=i.options.getUser('user')||i.user;
+      return i.reply({embeds:[skullsEmbed(target,getSkulls(i.guild.id,target.id))]});
+    }
+
+    if(i.commandName==='skullboard')return i.reply({embeds:[skullboardEmbed(i.guild.id)]});
+
+    if(i.commandName==='addskulls'){
+      if(!canManageServer(i.member))return i.reply({content:'❌ You need **Manage Server** to use this command.',ephemeral:true});
+      const target=i.options.getUser('user',true),amount=i.options.getInteger('amount',true),total=changeSkulls(i.guild.id,target.id,amount);
+      return i.reply({content:'✅ Added **'+amount+'** skull'+(amount===1?'':'s')+' to '+target+'. They now have **'+total+'** 💀'});
+    }
+
+    if(i.commandName==='removeskulls'){
+      if(!canManageServer(i.member))return i.reply({content:'❌ You need **Manage Server** to use this command.',ephemeral:true});
+      const target=i.options.getUser('user',true),amount=i.options.getInteger('amount',true),before=getSkulls(i.guild.id,target.id),total=changeSkulls(i.guild.id,target.id,-amount),removed=before-total;
+      return i.reply({content:'✅ Removed **'+removed+'** skull'+(removed===1?'':'s')+' from '+target+'. They now have **'+total+'** 💀'});
+    }
+
+
 
     if(filterCommands.includes(i.commandName)&&!canManageServer(i.member))
       return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Manage Server** to use this command.',0xed4245)],ephemeral:true});
