@@ -148,7 +148,7 @@ client.on('interactionCreate',async i=>{
       const targetUser=i.options.getUser('user')||i.user;
       const count=getSkulls(i.guild.id,targetUser.id);
       const response=userMention(targetUser.id)+' you have **'+count+'** skull'+(count===1?'':'s')+' 💀';
-      await i.reply({content:response,allowedMentions:{users:[targetUser.id]}});
+      await i.editReply({content:response,allowedMentions:{users:[targetUser.id]}});
       interactionLog(i,i.commandName).catch(()=>{});
       return;
     }
