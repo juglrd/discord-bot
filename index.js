@@ -192,6 +192,19 @@ client.on('interactionCreate',async i=>{
 
   if(i.isChatInputCommand()&&i.commandName!=='blacklist'&&commandGuard.isBlacklisted(i.guild.id,i.user.id))return i.reply({content:"❌ You are command blacklisted and cannot use this bot's commands.",ephemeral:true}).catch(()=>{});
 
+  // Acknowledge /skullboard immediately before any async leaderboard work.
+  if(i.isChatInputCommand()&&i.commandName==='skullboard'){
+    try{
+      await i.deferReply();
+      const embed=await skullboardEmbed(i.guild,i.user.id);
+      await i.editReply({embeds:[embed],allowedMentions:{users:[]}});
+    }catch(e){
+      console.error('Skullboard interaction failed:',e?.stack||e?.message||e);
+      if(i.deferred)await i.editReply({content:'❌ Something went wrong while loading the skull leaderboard.'}).catch(()=>{});
+    }
+    return;
+  }
+
   // Handle /skulls before config, logging, or member fetches.
   if(i.isChatInputCommand()&&i.commandName==='skulls'){
     try{
@@ -233,11 +246,6 @@ client.on('interactionCreate',async i=>{
     if(!handledCommands.has(i.commandName))return i.reply({embeds:[commandEmbed('❌ Command unavailable','Unrecognized slash command.',0xed4245)],ephemeral:true}).catch(()=>{});
     interactionLog(i,i.commandName).catch(()=>{});
 
-    if(i.commandName==='skullboard'){
-      await i.deferReply();
-      const embed=await skullboardEmbed(i.guild,i.user.id);
-      return i.editReply({embeds:[embed],allowedMentions:{users:[]}});
-    }
 
     if(i.commandName==='addskulls'){
       if(!commandGuard.canControl(i.member))return i.reply({content:"❌ Only the server's top 2 roles can use this command.",ephemeral:true});
