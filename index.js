@@ -176,7 +176,7 @@ client.on('interactionCreate',async i=>{
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
   const advancedCommands=['modpanel','modstats','history','why','channelmode'];
   if(advancedCommands.includes(i.commandName))return;
-  const handledCommands=new Set(['help','strike','skulls','skullboard','addskulls','removeskulls',...filterCommands,...moderationCommands]);
+  const handledCommands=new Set(['help','strike','skulls','skullboard','addskulls','removeskulls','blacklist',...filterCommands,...moderationCommands]);
   const replyError=async e=>{
     console.error('Interaction failed:',e?.stack||e?.message||e);
     if(!i.replied&&!i.deferred)await i.reply({embeds:[commandEmbed('❌ Error','Something went wrong.',0xed4245)],ephemeral:true}).catch(()=>{});
@@ -217,6 +217,21 @@ client.on('interactionCreate',async i=>{
     }
 
 
+
+    if(i.commandName==='blacklist'){
+      if(!commandGuard.canControl(i.member))return i.reply({content:"❌ Only the server's top 2 roles can use the command blacklist.",ephemeral:true});
+      const action=i.options.getSubcommand();
+      const target=i.options.getUser('user',true);
+      if(target.bot)return i.reply({content:'❌ Bot accounts cannot be command blacklisted.',ephemeral:true});
+      if(action==='add'){
+        cfg.commandBlacklist[target.id]={by:i.user.id,at:new Date().toISOString()};
+        saveData();
+        return i.reply({content:'📛 <@'+target.id+'> is now command blacklisted. They cannot use this bot\'s commands.',allowedMentions:{users:[target.id]}});
+      }
+      delete cfg.commandBlacklist[target.id];
+      saveData();
+      return i.reply({content:'✅ Command access restored for <@'+target.id+'>.',allowedMentions:{users:[target.id]}});
+    }
 
     if(filterCommands.includes(i.commandName)&&!canManageServer(i.member))
       return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Manage Server** to use this command.',0xed4245)],ephemeral:true});
