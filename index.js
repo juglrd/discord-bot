@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import fs from 'node:fs';
-import { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, userMention } from 'discord.js';
 
 if (!process.env.DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in environment variables.'); process.exit(1); }
 
@@ -146,8 +146,8 @@ client.on('interactionCreate',async i=>{
     if(i.commandName==='skulls'){
       const targetUser=i.options.getUser('user')||i.user;
       const count=getSkulls(i.guild.id,targetUser.id);
-      const response='<@'+targetUser.id+'> you have **'+count+'** skull'+(count===1?'':'s')+' 💀';
-      await i.reply({content:response});
+      const response=userMention(targetUser.id)+' you have **'+count+'** skull'+(count===1?'':'s')+' 💀';
+      await i.reply({content:response,allowedMentions:{users:[targetUser.id]}});
       interactionLog(i,i.commandName).catch(()=>{});
       return;
     }
