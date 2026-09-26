@@ -144,6 +144,7 @@ client.on('interactionCreate',async i=>{
     if(!i.isChatInputCommand())return;
     if(!handledCommands.has(i.commandName))return i.reply({embeds:[commandEmbed('❌ Command unavailable','Unrecognized slash command.',0xed4245)],ephemeral:true}).catch(()=>{});
     if(i.commandName==='skulls'){
+      await i.deferReply();
       const targetUser=i.options.getUser('user')||i.user;
       const count=getSkulls(i.guild.id,targetUser.id);
       const response=userMention(targetUser.id)+' you have **'+count+'** skull'+(count===1?'':'s')+' 💀';
