@@ -63,33 +63,35 @@ function changeSkulls(gid,uid,amount){
   saveData();
   return next;
 }
-async function skullboardEmbed(guild,viewerId){
+function skullboardEmbed(guild,viewerId){
   const cfg=getConfig(guild.id);
   const fmt=n=>n.toLocaleString('en-US');
-  const raw=Object.entries(cfg.skulls).map(([uid,count])=>({uid,count:Number(count)||0})).filter(x=>x.count>0).sort((a,b)=>b.count-a.count||a.uid.localeCompare(b.uid));
-  const topCandidates=raw.slice(0,25);
-  const checked=await Promise.all(topCandidates.map(async x=>{
-    const cached=guild.members.cache.get(x.uid);
-    const member=cached||await guild.members.fetch(x.uid).catch(()=>null);
-    if(member?.user?.bot){delete cfg.skulls[x.uid];return null;}
-    return x;
-  }));
-  const valid=checked.filter(Boolean);
-  const entries=valid.slice(0,15);
-  saveData();
-  if(!cfg.skullLeaderSince&&valid[0]){cfg.skullLeaderSince={userId:valid[0].uid,since:new Date().toISOString()};saveData();}
+  const raw=Object.entries(cfg.skulls)
+    .map(([uid,count])=>({uid,count:Number(count)||0}))
+    .filter(x=>x.count>0)
+    .sort((a,b)=>b.count-a.count||a.uid.localeCompare(b.uid));
+  const entries=raw.slice(0,15);
+  if(!cfg.skullLeaderSince&&entries[0]){
+    cfg.skullLeaderSince={userId:entries[0].uid,since:new Date().toISOString()};
+    saveData();
+  }
   const medals=['👑','🥈','🥉'];
   const lines=entries.length?entries.map((x,n)=>{
     const prefix=n<3?medals[n]:(n+1)+'.';
-    return '**'+prefix+'** <@'+x.uid+'>  •  **'+fmt(x.count)+'**'+(n===0&&cfg.skullLeaderSince?.userId===x.uid?' *(Held for '+Math.max(0,Math.floor((Date.now()-new Date(cfg.skullLeaderSince.since).getTime())/86400000))+' day'+(Math.floor((Date.now()-new Date(cfg.skullLeaderSince.since).getTime())/86400000)===1?'':'s')+')*':'');
+    const days=n===0&&cfg.skullLeaderSince?.userId===x.uid
+      ?Math.max(0,Math.floor((Date.now()-new Date(cfg.skullLeaderSince.since).getTime())/86400000))
+      :0;
+    return '**'+prefix+'** <@'+x.uid+'>  •  **'+fmt(x.count)+'**'+(n===0&&days>0?' *(Held for '+days+' day'+(days===1?'':'s')+')*':'');
   }):['No skulls have been recorded yet.'];
   const position=viewerId?(raw.findIndex(x=>x.uid===viewerId)+1):0;
-  const posText=position>0?'Your Position: **#'+position+'** ('+fmt(raw[position-1].count)+' skull'+(raw[position-1].count===1?'':'s')+')':'Your Position: **Unranked**';
+  const posText=position>0
+    ?'Your Position: **#'+position+'** ('+fmt(raw[position-1].count)+' skull'+(raw[position-1].count===1?'':'s')+')'
+    :'Your Position: **Unranked**';
   return new EmbedBuilder()
     .setTitle('💀 Skull Leaderboard')
     .setDescription('Users with the most skulls received on their messages.\n\n'+lines.join('\n'))
     .setColor(0x2b2d31)
-    .setFooter({text:posText+' • Top 15 • Bot accounts excluded'})
+    .setFooter({text:posText+' • Top 15'})
     .setTimestamp();
 }
 async function commandLog(message,name,args,result='used'){
@@ -195,12 +197,10 @@ client.on('interactionCreate',async i=>{
   // Acknowledge /skullboard immediately before any async leaderboard work.
   if(i.isChatInputCommand()&&i.commandName==='skullboard'){
     try{
-      await i.deferReply();
-      const embed=await skullboardEmbed(i.guild,i.user.id);
-      await i.editReply({embeds:[embed],allowedMentions:{users:[]}});
+      await i.reply({embeds:[skullboardEmbed(i.guild,i.user.id)],allowedMentions:{users:[]}});
     }catch(e){
       console.error('Skullboard interaction failed:',e?.stack||e?.message||e);
-      if(i.deferred)await i.editReply({content:'❌ Something went wrong while loading the skull leaderboard.'}).catch(()=>{});
+      if(!i.replied&&!i.deferred)await i.reply({content:'❌ Something went wrong while loading the skull leaderboard.',ephemeral:true}).catch(()=>{});
     }
     return;
   }
