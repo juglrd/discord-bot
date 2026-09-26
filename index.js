@@ -38,7 +38,7 @@ async function cleanupExpiredStrikes(){for(const guild of client.guilds.cache.va
 function isSkullReaction(reaction){const name=reaction.emoji?.name;return name==='💀'||String(name||'').toLowerCase()==='skull';}
 function getSkulls(gid,uid){const c=getConfig(gid);return Math.max(0,Number(c.skulls[uid]||0));}
 function changeSkulls(gid,uid,amount){const c=getConfig(gid),next=Math.max(0,getSkulls(gid,uid)+amount);if(next===0)delete c.skulls[uid];else c.skulls[uid]=next;saveData();return next;}
-function skullboardEmbed(gid){const entries=Object.entries(getConfig(gid).skulls).map(([uid,count])=>({uid,count:Number(count)||0})).filter(x=>x.count>0).sort((a,b)=>b.count-a.count||a.uid.localeCompare(b.uid)).slice(0,10);const lines=entries.length?entries.map((x,n)=>'**'+(n+1)+'.** <@'+x.uid+'> — **'+x.count+'** 💀'):['No skulls have been recorded yet.'];return new EmbedBuilder().setTitle('💀 Skull Leaderboard').setColor(0x2b2d31).setDescription(lines.join('\n')).setFooter({text:'Top 10 skull counts in this server.'}).setTimestamp();}
+async function skullboardEmbed(guild){const cfg=getConfig(guild.id);const raw=Object.entries(cfg.skulls).map(([uid,count])=>({uid,count:Number(count)||0})).filter(x=>x.count>0).sort((a,b)=>b.count-a.count||a.uid.localeCompare(b.uid)).slice(0,25);const checked=await Promise.all(raw.map(async x=>{const member=await guild.members.fetch(x.uid).catch(()=>null);if(!member||member.user.bot){delete cfg.skulls[x.uid];return null;}return x;}));const entries=checked.filter(Boolean).slice(0,10);saveData();const lines=entries.length?entries.map((x,n)=>'**'+(n+1)+'.** <@'+x.uid+'>  •  **'+x.count+'** 💀'):['No skulls have been recorded yet.'];return new EmbedBuilder().setTitle('💀 Skullboard').setColor(0x2b2d31).setDescription(lines.join('\n')).setFooter({text:'Top 10 skull counts • bot accounts excluded'}).setTimestamp();}
 async function commandLog(message,name,args,result='used'){
   const cfg=getConfig(message.guild.id);
   if(!cfg.auditChannelId)return;
@@ -116,8 +116,8 @@ const slashCommands=[
 
 client.once('ready',async()=>{console.log(`Logged in as ${client.user.tag}`); await cleanupExpiredStrikes(); setInterval(()=>cleanupExpiredStrikes().catch(e=>console.error('Strike cleanup failed:',e?.message||e)),60000);try{await client.application.commands.set([]);console.log('Global slash commands cleared');for(const guild of client.guilds.cache.values()){try{const registered=await guild.commands.set(slashCommands);console.log(`Guild slash commands registered in ${guild.id}: ${registered.size}`);}catch(e){console.error(`Guild slash command registration failed in ${guild.id}:`,e?.message||e);}}}catch(e){console.error('Slash command registration failed:',e?.stack||e?.message||e);}});
 client.on('messageCreate',async message=>{if(!message.inGuild()||message.author.bot)return;const cfg=getConfig(message.guild.id);try{const prefix=cfg.prefix||DEFAULT_PREFIX;if(message.content.startsWith(prefix)){const parts=message.content.slice(prefix.length).trim().split(/\s+/);const name=parts.shift()?.toLowerCase();if(name)await executeCommand(message,name,parts).catch(e=>console.error('Prefix command failed:',e?.message||e));}}catch(e){console.error('Message handler failed:',e?.message||e);}});
-client.on('messageReactionAdd',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author)return;changeSkulls(message.guild.id,message.author.id,1);}catch(e){console.error('Skull reaction add failed:',e?.message||e);}});
-client.on('messageReactionRemove',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author)return;changeSkulls(message.guild.id,message.author.id,-1);}catch(e){console.error('Skull reaction remove failed:',e?.message||e);}});
+client.on('messageReactionAdd',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author||message.author.bot)return;changeSkulls(message.guild.id,message.author.id,1);}catch(e){console.error('Skull reaction add failed:',e?.message||e);}});
+client.on('messageReactionRemove',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author||message.author.bot)return;changeSkulls(message.guild.id,message.author.id,-1);}catch(e){console.error('Skull reaction remove failed:',e?.message||e);}});
 client.on('interactionCreate',async i=>{
   if(!i.inGuild())return;
 
@@ -162,18 +162,24 @@ client.on('interactionCreate',async i=>{
     if(!handledCommands.has(i.commandName))return i.reply({embeds:[commandEmbed('❌ Command unavailable','Unrecognized slash command.',0xed4245)],ephemeral:true}).catch(()=>{});
     interactionLog(i,i.commandName).catch(()=>{});
 
-    if(i.commandName==='skullboard')return i.reply({embeds:[skullboardEmbed(i.guild.id)]});
+    if(i.commandName==='skullboard')return i.reply({embeds:[await skullboardEmbed(i.guild)],allowedMentions:{users:[]}});
 
     if(i.commandName==='addskulls'){
       if(!canManageServer(i.member))return i.reply({content:'❌ You need **Manage Server** to use this command.',ephemeral:true});
-      const target=i.options.getUser('user',true),amount=i.options.getInteger('amount',true),total=changeSkulls(i.guild.id,target.id,amount);
-      return i.reply({content:'✅ Added **'+amount+'** skull'+(amount===1?'':'s')+' to '+target+'. They now have **'+total+'** 💀'});
+      const target=i.options.getUser('user',true),amount=i.options.getInteger('amount',true);
+      if(target.bot)return i.reply({content:'❌ Bot accounts cannot have skulls.',ephemeral:true});
+      const total=changeSkulls(i.guild.id,target.id,amount);
+      const embed=new EmbedBuilder().setTitle('💀 Skulls added').setColor(0x57f287).setDescription('<@'+target.id+'> received **'+amount+'** skull'+(amount===1?'':'s')+'.').addFields({name:'New total',value:'**'+total+'** 💀',inline:true}).setThumbnail(target.displayAvatarURL({size:128})).setTimestamp();
+      return i.reply({embeds:[embed],allowedMentions:{users:[target.id]}});
     }
 
     if(i.commandName==='removeskulls'){
       if(!canManageServer(i.member))return i.reply({content:'❌ You need **Manage Server** to use this command.',ephemeral:true});
-      const target=i.options.getUser('user',true),amount=i.options.getInteger('amount',true),before=getSkulls(i.guild.id,target.id),total=changeSkulls(i.guild.id,target.id,-amount),removed=before-total;
-      return i.reply({content:'✅ Removed **'+removed+'** skull'+(removed===1?'':'s')+' from '+target+'. They now have **'+total+'** 💀'});
+      const target=i.options.getUser('user',true),amount=i.options.getInteger('amount',true);
+      if(target.bot)return i.reply({content:'❌ Bot accounts cannot have skulls.',ephemeral:true});
+      const before=getSkulls(i.guild.id,target.id),total=changeSkulls(i.guild.id,target.id,-amount),removed=before-total;
+      const embed=new EmbedBuilder().setTitle('💀 Skulls removed').setColor(0xed4245).setDescription('<@'+target.id+'> lost **'+removed+'** skull'+(removed===1?'':'s')+'.').addFields({name:'New total',value:'**'+total+'** 💀',inline:true}).setThumbnail(target.displayAvatarURL({size:128})).setTimestamp();
+      return i.reply({embeds:[embed],allowedMentions:{users:[target.id]}});
     }
 
 
