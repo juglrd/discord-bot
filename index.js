@@ -7,17 +7,33 @@ if (!process.env.DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in enviro
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessageReactions], partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User] });
 const DATA_FILE = './settings.json';
 const DEFAULT_PREFIX = "'";
-const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, strikes: {} };
+const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, strikes: {}, commandBlacklist: {} };
 const STRIKE_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const STRIKE_APPEAL_PREFIX = 'strike_appeal:';
 
 function loadData(){ try { return JSON.parse(fs.readFileSync(DATA_FILE,'utf8')); } catch { return {}; } }
 const data = globalThis.__juglrdBotSettings ??= loadData();
 function saveData(){ try { fs.writeFileSync(DATA_FILE, JSON.stringify(data,null,2)); } catch(e) { console.error('Could not save settings:', e.message); } }
-function getConfig(guildId){ if(!data[guildId]) data[guildId]=structuredClone(DEFAULTS); data[guildId]={...DEFAULTS,...data[guildId],warnings:data[guildId].warnings||{},strikes:data[guildId].strikes&&typeof data[guildId].strikes==='object'?data[guildId].strikes:{},skulls:data[guildId].skulls&&typeof data[guildId].skulls==='object'?data[guildId].skulls:{}}; if(typeof data[guildId].prefix!=='string'||!data[guildId].prefix)data[guildId].prefix=DEFAULT_PREFIX; return data[guildId]; }
+function getConfig(guildId){ if(!data[guildId]) data[guildId]=structuredClone(DEFAULTS); data[guildId]={...DEFAULTS,...data[guildId],warnings:data[guildId].warnings||{},strikes:data[guildId].strikes&&typeof data[guildId].strikes==='object'?data[guildId].strikes:{},commandBlacklist:data[guildId].commandBlacklist&&typeof data[guildId].commandBlacklist==='object'?data[guildId].commandBlacklist:{},skulls:data[guildId].skulls&&typeof data[guildId].skulls==='object'?data[guildId].skulls:{}}; if(typeof data[guildId].prefix!=='string'||!data[guildId].prefix)data[guildId].prefix=DEFAULT_PREFIX; return data[guildId]; }
 function isMod(member){ return !!(member?.permissions.has(PermissionsBitField.Flags.ManageGuild)||member?.permissions.has(PermissionsBitField.Flags.ManageMessages)||member?.permissions.has(PermissionsBitField.Flags.Administrator)); }
 function canBan(member){ return !!member?.permissions.has(PermissionsBitField.Flags.BanMembers); }
 function canManageServer(member){ return !!member?.permissions.has(PermissionsBitField.Flags.ManageGuild); }
+const commandGuard = globalThis.__juglrdCommandGuard ??= {
+  isBlacklisted(guildId,userId){
+    return !!getConfig(guildId).commandBlacklist?.[userId];
+  },
+  topTwoRoleIds(guild){
+    return [...guild.roles.cache.values()]
+      .filter(r=>r.id!==guild.id&&!r.managed)
+      .sort((a,b)=>b.position-a.position)
+      .slice(0,2)
+      .map(r=>r.id);
+  },
+  canControl(member){
+    const top=this.topTwoRoleIds(member.guild);
+    return top.length>0 && member.roles.cache.some(r=>top.includes(r.id));
+  }
+};
 function commandEmbed(title,description,color=0x5865f2){ return new EmbedBuilder().setTitle(title).setDescription(description).setColor(color).setTimestamp(); }
 function warningEmbed(target,reason,moderator){
   const safeReason=String(reason||'No reason provided').replace(/\r?\n/g,' ').replace(/`/g,'ˋ').slice(0,800);
