@@ -239,10 +239,18 @@ client.on('interactionCreate',async i=>{
       if(i.user.id!==userId)return i.reply({content:'❌ Only the member who received this strike can create its appeal thread.',ephemeral:true});
       const state=cleanActiveStrikes(i.guild.id,userId);
       if(!state.active.length)return i.reply({content:'✅ This strike has already expired.',ephemeral:true});
-      if(i.message.hasThread&&i.message.thread)return i.reply({content:'An appeal thread already exists: <#'+i.message.thread.id+'>',ephemeral:true});
-      const thread=await i.message.startThread({name:'Strike appeal — '+i.user.username,autoArchiveDuration:1440,reason:'Staff strike appeal'});
-      await thread.send({content:'<@'+i.user.id+'> Please explain why you believe this strike was given falsely. Staff can review the appeal here.'});
-      return i.reply({content:'✅ Appeal thread created: <#'+thread.id+'>',ephemeral:true});
+      if(state.record.appealThreadId){
+        const existing=await i.guild.channels.fetch(state.record.appealThreadId).catch(()=>null);
+        if(existing)return i.reply({content:'An appeal thread already exists: <#'+existing.id+'>',ephemeral:true});
+        state.record.appealThreadId=null;
+      }
+      if(!i.channel?.isTextBased()||!i.channel.threads)return i.reply({content:'❌ Appeals must be created from a normal text-channel strikeboard.',ephemeral:true});
+      const thread=await i.channel.threads.create({name:'Strike appeal — '+i.user.username,autoArchiveDuration:1440,type:ChannelType.PrivateThread,invitable:false,reason:'Staff strike appeal'});
+      await thread.members.add(userId);
+      await thread.send({content:'<@'+userId+'> Please explain why you believe this strike was given falsely. This appeal is private; only you and staff with **Manage Threads** can view it.'});
+      state.record.appealThreadId=thread.id;
+      saveData();
+      return i.reply({content:'✅ Private appeal thread created: <#'+thread.id+'>',ephemeral:true});
     }
     if(!i.isChatInputCommand())return;
     if(!handledCommands.has(i.commandName))return i.reply({embeds:[commandEmbed('❌ Command unavailable','Unrecognized slash command.',0xed4245)],ephemeral:true}).catch(()=>{});
@@ -371,24 +379,30 @@ client.on('interactionCreate',async i=>{
     }
 
     if(i.commandName==='strike'){
-      if(!target)return i.reply({embeds:[commandEmbed('❌ Missing member','That user is not currently in this server.',0xed4245)],ephemeral:true});
+      const target=i.options.getMember('user')||await i.guild.members.fetch(i.options.getUser('user',true).id).catch(()=>null);
+      if(!target)return i.reply({content:'❌ That user is not currently in this server.',ephemeral:true});
       const reason=String(i.options.getString('reason')||'No reason provided').replace(/\r?\n/g,' ').replace(/@/g,'@\u200b').slice(0,500);
       const state=cleanActiveStrikes(i.guild.id,target.id);
       const now=new Date();
       state.active.push({id:Date.now()+'-'+i.id,reason,moderatorId:i.user.id,createdAt:now.toISOString(),expiresAt:new Date(now.getTime()+STRIKE_DURATION_MS).toISOString()});
       state.record.items=state.active;
+      let boardChannel=await i.guild.channels.fetch(cfg.strikeChannelId||i.channelId).catch(()=>null);
+      if(!boardChannel?.isTextBased())boardChannel=i.channel;
       let updated=false;
-      if(state.record.messageId&&state.record.channelId){
-        const ch=await i.guild.channels.fetch(state.record.channelId).catch(()=>null);
-        const msg=ch?.isTextBased()?await ch.messages.fetch(state.record.messageId).catch(()=>null):null;
+      if(state.record.messageId&&state.record.channelId===boardChannel.id){
+        const msg=await boardChannel.messages.fetch(state.record.messageId).catch(()=>null);
         if(msg){await msg.edit({embeds:[strikeEmbed(target,state.active)],components:[strikeAppealRow(target.id)]});updated=true;}
-        else{state.record.messageId=null;state.record.channelId=null;}
       }
-      if(updated)await i.reply({content:'✅ Strike added to '+target+'.',ephemeral:true});
-      else{const board=await i.reply({embeds:[strikeEmbed(target,state.active)],components:[strikeAppealRow(target.id)],fetchReply:true});state.record.channelId=i.channelId;state.record.messageId=board.id;}
+      if(!updated){
+        const board=await boardChannel.send({embeds:[strikeEmbed(target,state.active)],components:[strikeAppealRow(target.id)]});
+        state.record.channelId=boardChannel.id;
+        state.record.messageId=board.id;
+        state.record.appealThreadId=null;
+      }
       saveData();
-      return;
+      return i.reply({content:'✅ Strike added to '+target+'.',ephemeral:true});
     }
+
     if(i.commandName==='warn'){
       const reason=i.options.getString('reason')||'No reason provided';
       cfg.warnings[target.id]??=[];
