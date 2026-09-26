@@ -7,7 +7,7 @@ if (!process.env.DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in enviro
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessageReactions], partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User] });
 const DATA_FILE = './settings.json';
 const DEFAULT_PREFIX = "'";
-const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, strikes: {}, commandBlacklist: {} };
+const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, strikes: {}, commandBlacklist: {}, skullLeaderSince: null };
 const STRIKE_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const STRIKE_APPEAL_PREFIX = 'strike_appeal:';
 
@@ -53,8 +53,45 @@ async function cleanupExpiredStrikes(){for(const guild of client.guilds.cache.va
 
 function isSkullReaction(reaction){const name=reaction.emoji?.name;return name==='💀'||String(name||'').toLowerCase()==='skull';}
 function getSkulls(gid,uid){const c=getConfig(gid);return Math.max(0,Number(c.skulls[uid]||0));}
-function changeSkulls(gid,uid,amount){const c=getConfig(gid),next=Math.max(0,getSkulls(gid,uid)+amount);if(next===0)delete c.skulls[uid];else c.skulls[uid]=next;saveData();return next;}
-async function skullboardEmbed(guild){const cfg=getConfig(guild.id);const raw=Object.entries(cfg.skulls).map(([uid,count])=>({uid,count:Number(count)||0})).filter(x=>x.count>0).sort((a,b)=>b.count-a.count||a.uid.localeCompare(b.uid)).slice(0,25);const checked=await Promise.all(raw.map(async x=>{const member=await guild.members.fetch(x.uid).catch(()=>null);if(!member||member.user.bot){delete cfg.skulls[x.uid];return null;}return x;}));const entries=checked.filter(Boolean).slice(0,10);saveData();const lines=entries.length?entries.map((x,n)=>'**'+(n+1)+'.** <@'+x.uid+'>  •  **'+x.count+'** 💀'):['No skulls have been recorded yet.'];return new EmbedBuilder().setTitle('💀 Skullboard').setColor(0x2b2d31).setDescription(lines.join('\n')).setFooter({text:'Top 10 skull counts • bot accounts excluded'}).setTimestamp();}
+function changeSkulls(gid,uid,amount){
+  const c=getConfig(gid),next=Math.max(0,getSkulls(gid,uid)+amount);
+  if(next===0)delete c.skulls[uid];else c.skulls[uid]=next;
+  const leader=Object.entries(c.skulls).map(([id,count])=>({id,count:Number(count)||0})).filter(x=>x.count>0).sort((a,b)=>b.count-a.count||a.id.localeCompare(b.id))[0];
+  if(leader){
+    if(c.skullLeaderSince?.userId!==leader.id)c.skullLeaderSince={userId:leader.id,since:new Date().toISOString()};
+  }else c.skullLeaderSince=null;
+  saveData();
+  return next;
+}
+async function skullboardEmbed(guild,viewerId){
+  const cfg=getConfig(guild.id);
+  const fmt=n=>n.toLocaleString('en-US');
+  const raw=Object.entries(cfg.skulls).map(([uid,count])=>({uid,count:Number(count)||0})).filter(x=>x.count>0).sort((a,b)=>b.count-a.count||a.uid.localeCompare(b.uid));
+  const topCandidates=raw.slice(0,25);
+  const checked=await Promise.all(topCandidates.map(async x=>{
+    const cached=guild.members.cache.get(x.uid);
+    const member=cached||await guild.members.fetch(x.uid).catch(()=>null);
+    if(member?.user?.bot){delete cfg.skulls[x.uid];return null;}
+    return x;
+  }));
+  const valid=checked.filter(Boolean);
+  const entries=valid.slice(0,15);
+  saveData();
+  if(!cfg.skullLeaderSince&&valid[0]){cfg.skullLeaderSince={userId:valid[0].uid,since:new Date().toISOString()};saveData();}
+  const medals=['👑','🥈','🥉'];
+  const lines=entries.length?entries.map((x,n)=>{
+    const prefix=n<3?medals[n]:(n+1)+'.';
+    return '**'+prefix+'** <@'+x.uid+'>  •  **'+fmt(x.count)+'**'+(n===0&&cfg.skullLeaderSince?.userId===x.uid?' *(Held for '+Math.max(0,Math.floor((Date.now()-new Date(cfg.skullLeaderSince.since).getTime())/86400000))+' day'+(Math.floor((Date.now()-new Date(cfg.skullLeaderSince.since).getTime())/86400000)===1?'':'s')+')*':'');
+  }):['No skulls have been recorded yet.'];
+  const position=viewerId?(raw.findIndex(x=>x.uid===viewerId)+1):0;
+  const posText=position>0?'Your Position: **#'+position+'** ('+fmt(raw[position-1].count)+' skull'+(raw[position-1].count===1?'':'s')+')':'Your Position: **Unranked**';
+  return new EmbedBuilder()
+    .setTitle('💀 Skull Leaderboard')
+    .setDescription('Users with the most skulls received on their messages.\n\n'+lines.join('\n'))
+    .setColor(0x2b2d31)
+    .setFooter({text:posText+' • Top 15 • Bot accounts excluded'})
+    .setTimestamp();
+}
 async function commandLog(message,name,args,result='used'){
   const cfg=getConfig(message.guild.id);
   if(!cfg.auditChannelId)return;
@@ -196,10 +233,10 @@ client.on('interactionCreate',async i=>{
     if(!handledCommands.has(i.commandName))return i.reply({embeds:[commandEmbed('❌ Command unavailable','Unrecognized slash command.',0xed4245)],ephemeral:true}).catch(()=>{});
     interactionLog(i,i.commandName).catch(()=>{});
 
-    if(i.commandName==='skullboard')return i.reply({embeds:[await skullboardEmbed(i.guild)],allowedMentions:{users:[]}});
+    if(i.commandName==='skullboard')return i.reply({embeds:[await skullboardEmbed(i.guild,i.user.id)],allowedMentions:{users:[]}});
 
     if(i.commandName==='addskulls'){
-      if(!canManageServer(i.member))return i.reply({content:'❌ You need **Manage Server** to use this command.',ephemeral:true});
+      if(!commandGuard.canControl(i.member))return i.reply({content:"❌ Only the server's top 2 roles can use this command.",ephemeral:true});
       const target=i.options.getUser('user',true),amount=i.options.getInteger('amount',true);
       if(target.bot)return i.reply({content:'❌ Bot accounts cannot have skulls.',ephemeral:true});
       const total=changeSkulls(i.guild.id,target.id,amount);
@@ -208,7 +245,7 @@ client.on('interactionCreate',async i=>{
     }
 
     if(i.commandName==='removeskulls'){
-      if(!canManageServer(i.member))return i.reply({content:'❌ You need **Manage Server** to use this command.',ephemeral:true});
+      if(!commandGuard.canControl(i.member))return i.reply({content:"❌ Only the server's top 2 roles can use this command.",ephemeral:true});
       const target=i.options.getUser('user',true),amount=i.options.getInteger('amount',true);
       if(target.bot)return i.reply({content:'❌ Bot accounts cannot have skulls.',ephemeral:true});
       const before=getSkulls(i.guild.id,target.id),total=changeSkulls(i.guild.id,target.id,-amount),removed=before-total;
