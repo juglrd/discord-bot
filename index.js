@@ -120,6 +120,23 @@ client.on('messageReactionAdd',async(reaction,user)=>{if(user.bot||!isSkullReact
 client.on('messageReactionRemove',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author)return;changeSkulls(message.guild.id,message.author.id,-1);}catch(e){console.error('Skull reaction remove failed:',e?.message||e);}});
 client.on('interactionCreate',async i=>{
   if(!i.inGuild())return;
+
+  // Handle /skulls before config, logging, or member fetches.
+  if(i.isChatInputCommand()&&i.commandName==='skulls'){
+    try{
+      const targetUser=i.options.getUser('user')||i.user;
+      const count=getSkulls(i.guild.id,targetUser.id);
+      await i.reply({
+        content:userMention(targetUser.id)+' you have **'+count+'** skull'+(count===1?'':'s')+' 💀',
+        allowedMentions:{users:[targetUser.id]}
+      });
+    }catch(e){
+      console.error('Skulls command failed:',e?.stack||e?.message||e);
+      if(!i.replied&&!i.deferred)await i.reply({content:'❌ Something went wrong while checking skulls.',ephemeral:true}).catch(()=>{});
+    }
+    return;
+  }
+
   const cfg=getConfig(i.guild.id);
   const filterCommands=['prefix','nsfw','gore','pii','setlogs','config','antiinvite','antispam'];
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
@@ -143,16 +160,6 @@ client.on('interactionCreate',async i=>{
     }
     if(!i.isChatInputCommand())return;
     if(!handledCommands.has(i.commandName))return i.reply({embeds:[commandEmbed('❌ Command unavailable','Unrecognized slash command.',0xed4245)],ephemeral:true}).catch(()=>{});
-    if(i.commandName==='skulls'){
-      await i.deferReply();
-      const targetUser=i.options.getUser('user')||i.user;
-      const count=getSkulls(i.guild.id,targetUser.id);
-      const response=userMention(targetUser.id)+' you have **'+count+'** skull'+(count===1?'':'s')+' 💀';
-      await i.editReply({content:response,allowedMentions:{users:[targetUser.id]}});
-      interactionLog(i,i.commandName).catch(()=>{});
-      return;
-    }
-
     interactionLog(i,i.commandName).catch(()=>{});
 
     if(i.commandName==='skullboard')return i.reply({embeds:[skullboardEmbed(i.guild.id)]});
