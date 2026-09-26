@@ -109,21 +109,30 @@ const slashCommands=[
 client.once('ready',async()=>{console.log(`Logged in as ${client.user.tag}`); await cleanupExpiredStrikes(); setInterval(()=>cleanupExpiredStrikes().catch(e=>console.error('Strike cleanup failed:',e?.message||e)),60000);try{await client.application.commands.set([]);console.log('Global slash commands cleared');for(const guild of client.guilds.cache.values()){try{const registered=await guild.commands.set(slashCommands);console.log(`Guild slash commands registered in ${guild.id}: ${registered.size}`);}catch(e){console.error(`Guild slash command registration failed in ${guild.id}:`,e?.message||e);}}}catch(e){console.error('Slash command registration failed:',e?.stack||e?.message||e);}});
 client.on('messageCreate',async message=>{if(!message.inGuild()||message.author.bot)return;const cfg=getConfig(message.guild.id);try{const prefix=cfg.prefix||DEFAULT_PREFIX;if(message.content.startsWith(prefix)){const parts=message.content.slice(prefix.length).trim().split(/\s+/);const name=parts.shift()?.toLowerCase();if(name)await executeCommand(message,name,parts).catch(e=>console.error('Prefix command failed:',e?.message||e));}}catch(e){console.error('Message handler failed:',e?.message||e);}});
 client.on('interactionCreate',async i=>{
-  if(!i.isChatInputCommand()||!i.inGuild())return;
+  if(!i.inGuild())return;
   const cfg=getConfig(i.guild.id);
   const filterCommands=['prefix','nsfw','gore','pii','setlogs','config','antiinvite','antispam'];
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
   const advancedCommands=['modpanel','modstats','history','why','channelmode'];
   if(advancedCommands.includes(i.commandName))return;
-  const handledCommands=new Set(['help',...filterCommands,...moderationCommands]);
-  if(!handledCommands.has(i.commandName)){
-    return i.reply({embeds:[commandEmbed('❌ Command unavailable','`/'+i.commandName+'` is registered to this application, but this version of the bot does not have a handler for it yet.',0xed4245)],ephemeral:true}).catch(()=>{});
-  }
+  const handledCommands=new Set(['help','strike',...filterCommands,...moderationCommands]);
   const replyError=async e=>{
     console.error('Interaction failed:',e?.stack||e?.message||e);
     if(!i.replied&&!i.deferred)await i.reply({embeds:[commandEmbed('❌ Error','Something went wrong.',0xed4245)],ephemeral:true}).catch(()=>{});
   };
   try{
+    if(i.isButton()&&i.customId.startsWith(STRIKE_APPEAL_PREFIX)){
+      const userId=i.customId.slice(STRIKE_APPEAL_PREFIX.length);
+      if(i.user.id!==userId)return i.reply({content:'❌ Only the member who received this strike can create its appeal thread.',ephemeral:true});
+      const state=cleanActiveStrikes(i.guild.id,userId);
+      if(!state.active.length)return i.reply({content:'✅ This strike has already expired.',ephemeral:true});
+      if(i.message.hasThread&&i.message.thread)return i.reply({content:'An appeal thread already exists: <#'+i.message.thread.id+'>',ephemeral:true});
+      const thread=await i.message.startThread({name:'Strike appeal — '+i.user.username,autoArchiveDuration:1440,reason:'Staff strike appeal'});
+      await thread.send({content:'<@'+i.user.id+'> Please explain why you believe this strike was given falsely. Staff can review the appeal here.'});
+      return i.reply({content:'✅ Appeal thread created: <#'+thread.id+'>',ephemeral:true});
+    }
+    if(!i.isChatInputCommand())return;
+    if(!handledCommands.has(i.commandName))return i.reply({embeds:[commandEmbed('❌ Command unavailable','Unrecognized slash command.',0xed4245)],ephemeral:true}).catch(()=>{});
     await interactionLog(i,i.commandName);
 
     if(filterCommands.includes(i.commandName)&&!canManageServer(i.member))
@@ -131,6 +140,9 @@ client.on('interactionCreate',async i=>{
 
     if(moderationCommands.includes(i.commandName)&&!canBan(i.member))
       return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Ban Members** to use moderation commands.',0xed4245)],ephemeral:true});
+
+    if(i.commandName==='strike'&&!canManageServer(i.member))
+      return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Manage Server** to use this command.',0xed4245)],ephemeral:true});
 
     if(i.commandName==='help')
       return i.reply({embeds:[commandEmbed('📖 Commands',helpText(cfg.prefix||DEFAULT_PREFIX))]});
@@ -174,6 +186,25 @@ client.on('interactionCreate',async i=>{
     if(['warn','warnings','clearwarnings','timeout','kick','ban'].includes(i.commandName)&&!target)
       return i.reply({embeds:[commandEmbed('❌ Missing member','That user is not currently in this server.',0xed4245)],ephemeral:true});
 
+    if(i.commandName==='strike'){
+      if(!target)return i.reply({embeds:[commandEmbed('❌ Missing member','That user is not currently in this server.',0xed4245)],ephemeral:true});
+      const reason=String(i.options.getString('reason')||'No reason provided').replace(/\r?\n/g,' ').replace(/@/g,'@\u200b').slice(0,500);
+      const state=cleanActiveStrikes(i.guild.id,target.id);
+      const now=new Date();
+      state.active.push({id:Date.now()+'-'+i.id,reason,moderatorId:i.user.id,createdAt:now.toISOString(),expiresAt:new Date(now.getTime()+STRIKE_DURATION_MS).toISOString()});
+      state.record.items=state.active;
+      let updated=false;
+      if(state.record.messageId&&state.record.channelId){
+        const ch=await i.guild.channels.fetch(state.record.channelId).catch(()=>null);
+        const msg=ch?.isTextBased()?await ch.messages.fetch(state.record.messageId).catch(()=>null):null;
+        if(msg){await msg.edit({embeds:[strikeEmbed(target,state.active)],components:[strikeAppealRow(target.id)]});updated=true;}
+        else{state.record.messageId=null;state.record.channelId=null;}
+      }
+      if(updated)await i.reply({content:'✅ Strike added to '+target+'.',ephemeral:true});
+      else{const board=await i.reply({embeds:[strikeEmbed(target,state.active)],components:[strikeAppealRow(target.id)],fetchReply:true});state.record.channelId=i.channelId;state.record.messageId=board.id;}
+      saveData();
+      return;
+    }
     if(i.commandName==='warn'){
       const reason=i.options.getString('reason')||'No reason provided';
       cfg.warnings[target.id]??=[];
