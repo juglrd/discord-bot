@@ -176,6 +176,9 @@ const slashCommands=[
  new SlashCommandBuilder().setName('history').setDescription('Show a member moderation history').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
  new SlashCommandBuilder().setName('why').setDescription('Explain recent moderation detections').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)),
  new SlashCommandBuilder().setName('strike').setDescription('Give a 30-day staff strike').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild).addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason').setRequired(true)),
+ new SlashCommandBuilder().setName('strikesetup').setDescription('Set up the strike system in this channel').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild),
+ new SlashCommandBuilder().setName('removestrike').setDescription('Remove an active strike').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild).addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addIntegerOption(o=>o.setName('number').setDescription('Strike number').setMinValue(1).setRequired(true)),
+ new SlashCommandBuilder().setName('paststrikes').setDescription('View a member\'s past strikes').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild),
  new SlashCommandBuilder().setName('skulls').setDescription('Show skull count').addUserOption(o=>o.setName('user').setDescription('User to check').setRequired(false)),
  new SlashCommandBuilder().setName('skullboard').setDescription('Show the top 10 skulls'),
  new SlashCommandBuilder().setName('addskulls').setDescription('Add skulls to a user').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild).addUserOption(o=>o.setName('user').setDescription('User receiving skulls').setRequired(true)).addIntegerOption(o=>o.setName('amount').setDescription('Amount to add').setMinValue(1).setMaxValue(100000).setRequired(true)),
@@ -225,7 +228,7 @@ client.on('interactionCreate',async i=>{
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
   const advancedCommands=['modpanel','modstats','history','why','channelmode'];
   if(advancedCommands.includes(i.commandName))return;
-  const handledCommands=new Set(['help','strike','skulls','skullboard','addskulls','removeskulls','blacklist',...filterCommands,...moderationCommands]);
+  const handledCommands=new Set(['help','strike','strikesetup','removestrike','paststrikes','skulls','skullboard','addskulls','removeskulls','blacklist',...filterCommands,...moderationCommands]);
   const replyError=async e=>{
     console.error('Interaction failed:',e?.stack||e?.message||e);
     if(!i.replied&&!i.deferred)await i.reply({embeds:[commandEmbed('❌ Error','Something went wrong.',0xed4245)],ephemeral:true}).catch(()=>{});
@@ -287,6 +290,8 @@ client.on('interactionCreate',async i=>{
     if(moderationCommands.includes(i.commandName)&&!canBan(i.member))
       return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Ban Members** to use moderation commands.',0xed4245)],ephemeral:true});
 
+    if(['strikesetup','removestrike','paststrikes'].includes(i.commandName)&&!canManageServer(i.member))return i.reply({content:'❌ You need **Manage Server** to use this command.',ephemeral:true});
+
     if(i.commandName==='strike'&&!canManageServer(i.member))
       return i.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Manage Server** to use this command.',0xed4245)],ephemeral:true});
 
@@ -331,6 +336,39 @@ client.on('interactionCreate',async i=>{
 
     if(['warn','warnings','clearwarnings','timeout','kick','ban'].includes(i.commandName)&&!target)
       return i.reply({embeds:[commandEmbed('❌ Missing member','That user is not currently in this server.',0xed4245)],ephemeral:true});
+
+    if(i.commandName==='strikesetup'){
+      if(!i.channel?.isTextBased()||!i.channel.threads)return i.reply({content:'❌ Use this command in a normal text channel.',ephemeral:true});
+      cfg.strikeChannelId=i.channel.id;
+      saveData();
+      const embed=new EmbedBuilder().setTitle('☆ • Staff Strike System • ☆').setColor(0x2b2d31).setDescription('This channel is now configured for staff strikes.\n\n**Commands**\n> `/strike` — give a 30-day strike\n> `/removestrike` — remove an active strike\n> `/paststrikes` — view previous strikes\n\nStrikes expire after **30 days**. Appeals are private to the member and staff.');
+      return i.reply({embeds:[embed]});
+    }
+
+    if(i.commandName==='removestrike'){
+      const target=i.options.getUser('user',true),number=i.options.getInteger('number',true);
+      const state=cleanActiveStrikes(i.guild.id,target.id);
+      const removed=state.active[number-1];
+      if(!removed)return i.reply({content:'❌ That active strike number does not exist.',ephemeral:true});
+      state.record.items=state.active.filter((_,n)=>n!==number-1);
+      state.record.history.push({...removed,status:'removed',removedAt:new Date().toISOString(),removedBy:i.user.id});
+      saveData();
+      await updateStrikeBoard(i.guild,target.id);
+      return i.reply({content:'✅ Removed strike **#'+number+'** from '+target+'.',ephemeral:true});
+    }
+
+    if(i.commandName==='paststrikes'){
+      const target=i.options.getUser('user',true);
+      const state=cleanActiveStrikes(i.guild.id,target.id);
+      const history=state.record.history.slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+      if(!history.length)return i.reply({content:'📜 '+target+' has no past strikes.',ephemeral:true});
+      const lines=history.slice(0,15).map((s,n)=>{
+        const ts=Math.floor(new Date(s.createdAt).getTime()/1000);
+        const status=s.status==='removed'?'Removed':'Expired';
+        return '**'+(n+1)+'.** <t:'+ts+':d> • **'+status+'**\n> '+s.reason+'\n> Issued by <@'+s.moderatorId+'>';
+      });
+      return i.reply({embeds:[new EmbedBuilder().setTitle('📜 Past Strikes').setColor(0x2b2d31).setDescription('Strike history for '+target+'\n\n'+lines.join('\n\n')).setFooter({text:'Showing up to 15 past strikes'})],ephemeral:true,allowedMentions:{users:[]}});
+    }
 
     if(i.commandName==='strike'){
       if(!target)return i.reply({embeds:[commandEmbed('❌ Missing member','That user is not currently in this server.',0xed4245)],ephemeral:true});
