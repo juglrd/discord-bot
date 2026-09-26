@@ -146,7 +146,7 @@ client.on('interactionCreate',async i=>{
     if(i.commandName==='skulls'){
       const targetUser=i.options.getUser('user')||i.user;
       const count=getSkulls(i.guild.id,targetUser.id);
-      const response=targetUser+' you have **'+count+'** skull'+(count===1?'':'s')+' 💀';
+      const response='<@'+targetUser.id+'> you have **'+count+'** skull'+(count===1?'':'s')+' 💀';
       await i.reply({content:response});
       interactionLog(i,i.commandName).catch(()=>{});
       return;
