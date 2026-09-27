@@ -160,7 +160,7 @@ function historyEmbed(gid,user){const items=(cfg(gid).history[user.id]||[]).slic
 function whyEmbed(gid,user){const items=(cfg(gid).history[user.id]||[]).slice(-5).reverse();return new EmbedBuilder().setTitle('🔎 Why — '+user.tag).setColor(0x5865f2).setDescription(items.length?items.map(x=>'**'+x.type+'**\\n'+(x.details?.reason||'No reason recorded')).join('\\n\\n').slice(0,3900):'No recent incidents recorded.');}
 function statsEmbed(gid){const d=dashboard.get(gid)||{},counts=d.byType||{};return new EmbedBuilder().setTitle('📊 Moderation statistics').setColor(0x5865f2).addFields({name:'Scans',value:String(d.scans||0),inline:true},{name:'Removed',value:String(d.removed||0),inline:true},{name:'Spam events',value:String(d.spam||0),inline:true},{name:'Image spam',value:String(d.imageSpam||0),inline:true},{name:'Detection breakdown',value:Object.entries(counts).map(([k,v])=>'**'+k+':** '+v).join('\\n').slice(0,1024)||'None'});}
 function panelEmbed(gid){const c=cfg(gid),d=dashboard.get(gid)||{};return new EmbedBuilder().setTitle('🛡️ Moderation dashboard').setColor(0x5865f2).addFields({name:'Prefix',value:`\`${c.prefix}\``,inline:true},{name:'NSFW',value:c.nsfwFilter?'🟢 On':'🔴 Off',inline:true},{name:'Gore',value:c.goreFilter?'🟢 On':'🔴 Off',inline:true},{name:'Anti-spam/flood',value:c.antiSpam?'🟢 On':'🔴 Off',inline:true},{name:'Scans',value:String(d.scans||0),inline:true},{name:'Removed',value:String(d.removed||0),inline:true},{name:'Spam events',value:String(d.spam||0),inline:true},{name:'Image spam',value:String(d.imageSpam||0),inline:true},);}
-function install(client){
+export function installModeration(client){
   if(client.__advancedModerationInstalled)return;
   client.__advancedModerationInstalled=true;
   client.on('messageCreate',async m=>{
@@ -201,5 +201,5 @@ function install(client){
       return i.reply({content:'Channel detection mode set to '+mode+'.',ephemeral:true});
     }
   };
-  console.log('[mod] moderation preload installed');
-}const OriginalLogin=Client.prototype.login;Client.prototype.login=async function(...args){install(this);return OriginalLogin.apply(this,args);};
+  console.log('[mod] moderation installed');
+}
