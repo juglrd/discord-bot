@@ -109,10 +109,10 @@ async function inspect(message){
 }
 
 export function installLinkSecurity(client){
-  if(!this.__linkSecurityInstalled){
-    this.__linkSecurityInstalled=true;
-    this.on('messageCreate',m=>{void inspect(m).catch(e=>console.error('[link] scan failed:',e?.message||e));});
-    this.on('messageUpdate',async(_old,m)=>{try{const fresh=await m.fetch().catch(()=>m);await inspect(fresh);}catch(e){console.error('[link] edit scan failed:',e?.message||e);}});
+  if(!client.__linkSecurityInstalled){
+    client.__linkSecurityInstalled=true;
+    client.on('messageCreate',m=>{void inspect(m).catch(e=>console.error('[link] scan failed:',e?.message||e));});
+    client.on('messageUpdate',async(_old,m)=>{try{const fresh=await m.fetch().catch(()=>m);await inspect(fresh);}catch(e){console.error('[link] edit scan failed:',e?.message||e);}});
     if(!GOOGLE_KEY)console.warn('[link] GOOGLE_SAFE_BROWSING_API_KEY is not set; using local high-confidence link/IP-logger detection only.');
   }
 }
