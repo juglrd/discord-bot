@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import fs from 'node:fs';
 import { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, userMention } from 'discord.js';
+import { installModeration } from './moderation-preload.js';
+import { installLinkSecurity } from './link-security-preload.js';
 
 if (!process.env.DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in environment variables.'); process.exit(1); }
 
@@ -8,6 +10,9 @@ process.on('unhandledRejection', e => console.error('[process] unhandledRejectio
 process.on('uncaughtException', e => console.error('[process] uncaughtException:', e?.stack || e));
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessageReactions], partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User] });
+
+installModeration(client);
+installLinkSecurity(client);
 const DATA_FILE = './settings.json';
 const DEFAULT_PREFIX = "'";
 const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, strikes: {}, strikeChannelId: null, strikeBoardMessageId: null, commandBlacklist: {}, skullLeaderSince: null };
