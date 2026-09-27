@@ -1,18 +1,16 @@
 import 'dotenv/config';
 import fs from 'node:fs';
 import { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, userMention } from 'discord.js';
-import { installModeration } from './moderation-preload.js';
-import { installLinkSecurity } from './link-security-preload.js';
 
 if (!process.env.DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in environment variables.'); process.exit(1); }
 
 process.on('unhandledRejection', e => console.error('[process] unhandledRejection:', e?.stack || e));
 process.on('uncaughtException', e => console.error('[process] uncaughtException:', e?.stack || e));
+process.on('beforeExit', code => console.error('[process] beforeExit:', code));
+
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessageReactions], partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User] });
 
-installModeration(client);
-installLinkSecurity(client);
 const DATA_FILE = './settings.json';
 const DEFAULT_PREFIX = "'";
 const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, strikes: {}, strikeChannelId: null, strikeBoardMessageId: null, commandBlacklist: {}, skullLeaderSince: null };
@@ -194,7 +192,9 @@ const slashCommands=[
  new SlashCommandBuilder().setName('channelmode').setDescription('Set detection mode for this channel').addStringOption(o=>o.setName('mode').setDescription('Detection mode').setRequired(true).addChoices({name:'normal',value:'normal'},{name:'strict',value:'strict'},{name:'media',value:'media'},{name:'off',value:'off'}))
 ].map(c=>c.toJSON());
 
-client.once('ready',async()=>{console.log(`Logged in as ${client.user.tag}`); await cleanupExpiredStrikes(); setInterval(()=>cleanupExpiredStrikes().catch(e=>console.error('Strike cleanup failed:',e?.message||e)),60000);try{await client.application.commands.set([]);console.log('Global slash commands cleared');for(const guild of client.guilds.cache.values()){try{const registered=await guild.commands.set(slashCommands);console.log(`Guild slash commands registered in ${guild.id}: ${registered.size}`);}catch(e){console.error(`Guild slash command registration failed in ${guild.id}:`,e?.message||e);}}}catch(e){console.error('Slash command registration failed:',e?.stack||e?.message||e);}});
+client.once('ready',async()=>{console.log(`Logged in as ${client.user.tag}`);
+  try{const {installModeration}=await import('./moderation-preload.js');installModeration(client);}catch(e){console.error('[startup] moderation module failed:',e?.stack||e);}
+  try{const {installLinkSecurity}=await import('./link-security-preload.js');installLinkSecurity(client);}catch(e){console.error('[startup] link security module failed:',e?.stack||e);} await cleanupExpiredStrikes(); setInterval(()=>cleanupExpiredStrikes().catch(e=>console.error('Strike cleanup failed:',e?.message||e)),60000);try{await client.application.commands.set([]);console.log('Global slash commands cleared');for(const guild of client.guilds.cache.values()){try{const registered=await guild.commands.set(slashCommands);console.log(`Guild slash commands registered in ${guild.id}: ${registered.size}`);}catch(e){console.error(`Guild slash command registration failed in ${guild.id}:`,e?.message||e);}}}catch(e){console.error('Slash command registration failed:',e?.stack||e?.message||e);}});
 client.on('messageCreate',async message=>{if(!message.inGuild()||message.author.bot)return;const cfg=getConfig(message.guild.id);try{const prefix=cfg.prefix||DEFAULT_PREFIX;if(message.content.startsWith(prefix)){const parts=message.content.slice(prefix.length).trim().split(/\s+/);const name=parts[0]?.toLowerCase();if(commandGuard.isBlacklisted(message.guild.id,message.author.id)&&name!=='blacklist')return message.reply({content:"❌ You are command blacklisted and cannot use this bot's commands."}).catch(()=>{});parts.shift();if(name)await executeCommand(message,name,parts).catch(e=>console.error('Prefix command failed:',e?.message||e));}}catch(e){console.error('Message handler failed:',e?.message||e);}});
 client.on('messageReactionAdd',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author||message.author.bot)return;changeSkulls(message.guild.id,message.author.id,1);}catch(e){console.error('Skull reaction add failed:',e?.message||e);}});
 client.on('messageReactionRemove',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author||message.author.bot)return;changeSkulls(message.guild.id,message.author.id,-1);}catch(e){console.error('Skull reaction remove failed:',e?.message||e);}});
