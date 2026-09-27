@@ -7,7 +7,7 @@ if (!process.env.DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in enviro
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessageReactions], partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User] });
 const DATA_FILE = './settings.json';
 const DEFAULT_PREFIX = "'";
-const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, piiFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, strikes: {}, strikeChannelId: null, commandBlacklist: {}, skullLeaderSince: null };
+const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, strikes: {}, strikeChannelId: null, commandBlacklist: {}, skullLeaderSince: null };
 const STRIKE_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const STRIKE_APPEAL_PREFIX = 'strike_appeal:';
 
@@ -44,12 +44,12 @@ function warningEmbed(target,reason,moderator){
     .setDescription('> You have successfully warned '+target+'\n> **Reason:** `'+safeReason+'`\n\nDuration: **Indefinite** | By: **'+moderator.username+'**')
     .setTimestamp();
 }
-function strikeRecord(gid,uid){const c=getConfig(gid);if(!c.strikes[uid])c.strikes[uid]={items:[],history:[],channelId:null,messageId:null,appealThreadId:null};const r=c.strikes[uid];if(!Array.isArray(r.items))r.items=[];if(!Array.isArray(r.history))r.history=[];return r;}
-function cleanActiveStrikes(gid,uid){const r=strikeRecord(gid,uid),now=Date.now(),active=[];for(const s of r.items){if(new Date(s.expiresAt).getTime()>now)active.push(s);else if(!r.history.some(x=>x.id===s.id))r.history.push({...s,status:'expired',expiredAt:s.expiresAt});}r.items=active;if(!active.length){r.channelId=null;r.messageId=null;r.appealThreadId=null;}saveData();return {record:r,active};}
-function strikeEmbed(target,active){let lines=active.map((s,n)=>{const ts=Math.floor(new Date(s.createdAt).getTime()/1000);return '> **'+(n+1)+'.** <t:'+ts+':d>: '+s.reason;}).join('\n')||'> No active strikes.';return new EmbedBuilder().setAuthor({name:target.user.username,iconURL:target.user.displayAvatarURL({size:128})}).setTitle('☆ • Staff Strikeboard • ☆').setColor(0x2b2d31).setDescription('If you believe your strike was given falsely, you may appeal by clicking the button below.\n(Otherwise, you can wait until the strike expires after 30 days.)\n\n'+userMention(target.id)+' ('+active.length+' strike'+(active.length===1?'':'s')+'⚠️)\n\n'+lines).setTimestamp();}
-function strikeAppealRow(uid){return new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(STRIKE_APPEAL_PREFIX+uid).setLabel('Create Appeal Thread').setStyle(ButtonStyle.Primary));}
-async function updateStrikeBoard(guild,uid){const {record,active}=cleanActiveStrikes(guild.id,uid);if(!record.messageId||!record.channelId)return;const ch=await guild.channels.fetch(record.channelId).catch(()=>null);const msg=ch?.isTextBased()?await ch.messages.fetch(record.messageId).catch(()=>null):null;if(!msg)return;if(!active.length){await msg.delete().catch(()=>{});record.messageId=null;record.channelId=null;record.appealThreadId=null;saveData();return;}const member=await guild.members.fetch(uid).catch(()=>null);if(!member)return;await msg.edit({embeds:[strikeEmbed(member,active)],components:[strikeAppealRow(uid)],allowedMentions:{users:[uid]}}).catch(()=>{});}
-async function cleanupExpiredStrikes(){for(const guild of client.guilds.cache.values()){const c=getConfig(guild.id);for(const uid of Object.keys(c.strikes||{})){const before=strikeRecord(guild.id,uid).items.length;cleanActiveStrikes(guild.id,uid);const after=strikeRecord(guild.id,uid).items.length;if(after<before)await updateStrikeBoard(guild,uid).catch(()=>{});}}saveData();}
+function strikeRecord(gid,uid){const c=getConfig(gid);if(!c.strikes[uid])c.strikes[uid]={items:[],history:[],appealThreadId:null};const r=c.strikes[uid];if(!Array.isArray(r.items))r.items=[];if(!Array.isArray(r.history))r.history=[];return r;}
+function cleanActiveStrikes(gid,uid){const r=strikeRecord(gid,uid),now=Date.now(),active=[];for(const s of r.items){if(new Date(s.expiresAt).getTime()>now)active.push(s);else if(!r.history.some(x=>x.id===s.id))r.history.push({...s,status:'expired',expiredAt:s.expiresAt});}r.items=active;saveData();return {record:r,active};}
+function strikeBoardEmbed(guild){const c=getConfig(guild.id),groups=[];for(const uid of Object.keys(c.strikes||{})){const state=cleanActiveStrikes(guild.id,uid);if(!state.active.length)continue;const lines=state.active.map((s,n)=>{const ts=Math.floor(new Date(s.createdAt).getTime()/1000);return '**#'+(n+1)+'** <t:'+ts+':d> — '+s.reason;}).join('\\n');groups.push({uid,count:state.active.length,lines});}groups.sort((a,b)=>b.count-a.count||a.uid.localeCompare(b.uid));const fields=groups.slice(0,25).map(g=>({name:userMention(g.uid)+' • '+g.count+' active strike'+(g.count===1?'':'s')+' ⚠️',value:g.lines.slice(0,1024)}));const embed=new EmbedBuilder().setTitle('☆ • Staff Strikeboard • ☆').setColor(0x2b2d31).setDescription(fields.length?'Members with active staff strikes:':'No active staff strikes.').addFields(fields);if(fields.length>=25)embed.setFooter({text:'Showing the first 25 members with active strikes.'});return embed;}
+function strikeAppealRow(){return new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(STRIKE_APPEAL_PREFIX+'self').setLabel('Create Appeal Thread').setStyle(ButtonStyle.Primary));}
+async function updateStrikeBoard(guild){const c=getConfig(guild.id);if(!c.strikeChannelId||!c.strikeBoardMessageId)return;const ch=await guild.channels.fetch(c.strikeChannelId).catch(()=>null);const msg=ch?.isTextBased()?await ch.messages.fetch(c.strikeBoardMessageId).catch(()=>null):null;if(!msg)return;const hasActive=Object.keys(c.strikes||{}).some(uid=>strikeRecord(guild.id,uid).items.length);if(!hasActive){await msg.edit({embeds:[strikeBoardEmbed(guild)],components:[strikeAppealRow()],allowedMentions:{parse:[]}}).catch(()=>{});return;}await msg.edit({embeds:[strikeBoardEmbed(guild)],components:[strikeAppealRow()],allowedMentions:{users:Object.keys(c.strikes||{}).filter(uid=>strikeRecord(guild.id,uid).items.length)}}).catch(()=>{});}
+async function cleanupExpiredStrikes(){for(const guild of client.guilds.cache.values()){const c=getConfig(guild.id);let changed=false;for(const uid of Object.keys(c.strikes||{})){const before=strikeRecord(guild.id,uid).items.length;cleanActiveStrikes(guild.id,uid);const after=strikeRecord(guild.id,uid).items.length;if(after<before)changed=true;}if(changed)await updateStrikeBoard(guild).catch(()=>{});}saveData();}
 
 function isSkullReaction(reaction){const name=reaction.emoji?.name;return name==='💀'||String(name||'').toLowerCase()==='skull';}
 function getSkulls(gid,uid){const c=getConfig(gid);return Math.max(0,Number(c.skulls[uid]||0));}
@@ -115,7 +115,7 @@ function formatDuration(ms){ for(const [u,v] of [['d',86400000],['h',3600000],['
 function helpText(prefix){ return `**Moderation commands**\n\`${prefix}help\` • commands\n\`${prefix}nsfw on/off\` • NSFW filter\n\`${prefix}gore on/off\` • gore filter\n\`${prefix}pii on/off\` • redact emails/IPs/addresses\n\`${prefix}prefix <new>\` • change prefix\n\`${prefix}setlogs #channel\` • audit logs\n\`${prefix}config\` • protection settings\n\`${prefix}warn @user [reason]\`\n\`${prefix}warnings @user\`\n\`${prefix}clearwarnings @user\`\n\`${prefix}timeout @user 10m [reason]\`\n\`${prefix}kick @user [reason]\`\n\`${prefix}ban @user [reason]\`\n\`${prefix}lock\` / \`${prefix}unlock\`\n\`${prefix}slowmode 10\`\n\`${prefix}antiinvite on/off\`\n\`${prefix}antispam on/off\`\n\`${prefix}blacklist add/remove @user\` • command blacklist\n`/skulls [user]` • skull count`; }
 async function executeCommand(message,name,args){
   const cfg=getConfig(message.guild.id), prefix=cfg.prefix||DEFAULT_PREFIX;
-  const filterCommands=['prefix','nsfw','gore','pii','setlogs','config','antiinvite','antispam'];
+  const filterCommands=['prefix','nsfw','gore','setlogs','config','antiinvite','antispam'];
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
   await commandLog(message,name,args);
   if(filterCommands.includes(name)&&!canManageServer(message.member)) return message.reply({embeds:[commandEmbed('🔒 Permission denied','You need **Manage Server** to use this command.',0xed4245)]});
@@ -156,7 +156,6 @@ const slashCommands=[
  new SlashCommandBuilder().setName('help').setDescription('Show moderation commands'),
  new SlashCommandBuilder().setName('nsfw').setDescription('Toggle NSFW filter').addStringOption(o=>o.setName('state').setDescription('on/off').setRequired(true).addChoices({name:'on',value:'on'},{name:'off',value:'off'})),
  new SlashCommandBuilder().setName('gore').setDescription('Toggle gore filter').addStringOption(o=>o.setName('state').setDescription('on/off').setRequired(true).addChoices({name:'on',value:'on'},{name:'off',value:'off'})),
- new SlashCommandBuilder().setName('pii').setDescription('Toggle PII redaction').addStringOption(o=>o.setName('state').setDescription('on/off').setRequired(true).addChoices({name:'on',value:'on'},{name:'off',value:'off'})),
  new SlashCommandBuilder().setName('setlogs').setDescription('Set audit log channel').addChannelOption(o=>o.setName('channel').setDescription('Log channel').addChannelTypes(ChannelType.GuildText).setRequired(true)),
  new SlashCommandBuilder().setName('config').setDescription('View protection settings'),
  new SlashCommandBuilder().setName('prefix').setDescription('Change server prefix').addStringOption(o=>o.setName('value').setDescription('1-3 characters').setRequired(true)),
@@ -235,10 +234,9 @@ client.on('interactionCreate',async i=>{
   };
   try{
     if(i.isButton()&&i.customId.startsWith(STRIKE_APPEAL_PREFIX)){
-      const userId=i.customId.slice(STRIKE_APPEAL_PREFIX.length);
-      if(i.user.id!==userId)return i.reply({content:'❌ Only the member who received this strike can create its appeal thread.',ephemeral:true});
+      const userId=i.user.id;
       const state=cleanActiveStrikes(i.guild.id,userId);
-      if(!state.active.length)return i.reply({content:'✅ This strike has already expired.',ephemeral:true});
+      if(!state.active.length)return i.reply({content:'❌ You do not have any active strikes to appeal.',ephemeral:true});
       if(state.record.appealThreadId){
         const existing=await i.guild.channels.fetch(state.record.appealThreadId).catch(()=>null);
         if(existing)return i.reply({content:'An appeal thread already exists: <#'+existing.id+'>',ephemeral:true});
@@ -247,7 +245,7 @@ client.on('interactionCreate',async i=>{
       if(!i.channel?.isTextBased()||!i.channel.threads)return i.reply({content:'❌ Appeals must be created from a normal text-channel strikeboard.',ephemeral:true});
       const thread=await i.channel.threads.create({name:'Strike appeal — '+i.user.username,autoArchiveDuration:1440,type:ChannelType.PrivateThread,invitable:false,reason:'Staff strike appeal'});
       await thread.members.add(userId);
-      await thread.send({content:'<@'+userId+'> Please explain why you believe this strike was given falsely. This appeal is private; only you and staff with **Manage Threads** can view it.'});
+      await thread.send({content:'<@'+userId+'> Please explain why you believe your strike was given falsely. This appeal is private; only you and staff with **Manage Threads** can view it.'});
       state.record.appealThreadId=thread.id;
       saveData();
       return i.reply({content:'✅ Private appeal thread created: <#'+thread.id+'>',ephemeral:true});
@@ -314,9 +312,9 @@ client.on('interactionCreate',async i=>{
       return i.reply({embeds:[commandEmbed('⚙️ Prefix changed','Prefix is now '+p+'.',0x57f287)]});
     }
 
-    if(['nsfw','gore','pii','antiinvite','antispam'].includes(i.commandName)){
+    if(['nsfw','gore','antiinvite','antispam'].includes(i.commandName)){
       const state=i.options.getString('state');
-      const key=i.commandName==='nsfw'?'nsfwFilter':i.commandName==='gore'?'goreFilter':i.commandName;
+      const key=i.commandName==='nsfw'?'nsfwFilter':i.commandName==='gore'?'goreFilter':'antiSpam';
       cfg[key]=state==='on';saveData();
       return i.reply({embeds:[commandEmbed('🛡️ Filter updated','**'+i.commandName.toUpperCase()+'** is now **'+state+'**.',0x57f287)]});
     }
@@ -334,7 +332,6 @@ client.on('interactionCreate',async i=>{
           {name:'Prefix',value:cfg.prefix,inline:true},
           {name:'NSFW',value:cfg.nsfwFilter?'🟢 On':'🔴 Off',inline:true},
           {name:'Gore',value:cfg.goreFilter?'🟢 On':'🔴 Off',inline:true},
-          {name:'PII',value:cfg.piiFilter?'🟢 On':'🔴 Off',inline:true},
           {name:'Anti-spam/flood',value:cfg.antiSpam?'🟢 On':'🔴 Off',inline:true},
           {name:'Anti-invite',value:cfg.antiInvite?'🟢 On':'🔴 Off',inline:true}
         )]});
@@ -348,9 +345,10 @@ client.on('interactionCreate',async i=>{
     if(i.commandName==='strikesetup'){
       if(!i.channel?.isTextBased()||!i.channel.threads)return i.reply({content:'❌ Use this command in a normal text channel.',ephemeral:true});
       cfg.strikeChannelId=i.channel.id;
+      const board=await i.channel.send({embeds:[strikeBoardEmbed(i.guild)],components:[strikeAppealRow()],allowedMentions:{parse:[]}});
+      cfg.strikeBoardMessageId=board.id;
       saveData();
-      const embed=new EmbedBuilder().setTitle('☆ • Staff Strike System • ☆').setColor(0x2b2d31).setDescription('This channel is now configured for staff strikes.\n\n**Commands**\n> `/strike` — give a 30-day strike\n> `/removestrike` — remove an active strike\n> `/paststrikes` — view previous strikes\n\nStrikes expire after **30 days**. Appeals are private to the member and staff.');
-      return i.reply({embeds:[embed]});
+      return i.reply({content:'✅ Staff strike system set up. The strikeboard has been created above.',ephemeral:true});
     }
 
     if(i.commandName==='removestrike'){
@@ -373,54 +371,22 @@ client.on('interactionCreate',async i=>{
       const lines=history.slice(0,15).map((s,n)=>{
         const ts=Math.floor(new Date(s.createdAt).getTime()/1000);
         const status=s.status==='removed'?'Removed':'Expired';
-        return '**'+(n+1)+'.** <t:'+ts+':d> • **'+status+'**\n> '+s.reason+'\n> Issued by <@'+s.moderatorId+'>';
+        return '**'+(n+1)+'.** <t:'+ts+':d> • **'+status+'**\\n> '+s.reason+'\\n> Issued by <@'+s.moderatorId+'>';
       });
-      return i.reply({embeds:[new EmbedBuilder().setTitle('📜 Past Strikes').setColor(0x2b2d31).setDescription('Strike history for '+target+'\n\n'+lines.join('\n\n')).setFooter({text:'Showing up to 15 past strikes'})],ephemeral:true,allowedMentions:{users:[]}});
+      return i.reply({embeds:[new EmbedBuilder().setTitle('📜 Past Strikes').setColor(0x2b2d31).setDescription('Strike history for '+target+'\\n\\n'+lines.join('\\n\\n')).setFooter({text:'Showing up to 15 past strikes'})],ephemeral:true,allowedMentions:{users:[]}}); 
     }
 
     if(i.commandName==='strike'){
       const target=i.options.getMember('user')||await i.guild.members.fetch(i.options.getUser('user',true).id).catch(()=>null);
       if(!target)return i.reply({content:'❌ That user is not currently in this server.',ephemeral:true});
-      const reason=String(i.options.getString('reason')||'No reason provided').replace(/\r?\n/g,' ').replace(/@/g,'@\u200b').slice(0,500);
+      const reason=String(i.options.getString('reason')||'No reason provided').replace(/\\r?\\n/g,' ').replace(/@/g,'@\\u200b').slice(0,500);
       const state=cleanActiveStrikes(i.guild.id,target.id);
       const now=new Date();
       state.active.push({id:Date.now()+'-'+i.id,reason,moderatorId:i.user.id,createdAt:now.toISOString(),expiresAt:new Date(now.getTime()+STRIKE_DURATION_MS).toISOString()});
       state.record.items=state.active;
-      // Keep one strikeboard message per member. If a board message already exists,
-      // edit that exact message so all active strikes stay together on one message.
-      let boardChannel=null;
-      let boardMessage=null;
-      if(state.record.messageId&&state.record.channelId){
-        boardChannel=await i.guild.channels.fetch(state.record.channelId).catch(()=>null);
-        if(boardChannel?.isTextBased()){
-          boardMessage=await boardChannel.messages.fetch(state.record.messageId).catch(()=>null);
-        }
-      }
-      if(boardMessage){
-        await boardMessage.edit({
-          embeds:[strikeEmbed(target,state.active)],
-          components:[strikeAppealRow(target.id)],
-          allowedMentions:{users:[target.id]}
-        });
-      }else{
-        boardChannel=await i.guild.channels.fetch(cfg.strikeChannelId||i.channelId).catch(()=>null);
-        if(!boardChannel?.isTextBased())boardChannel=i.channel;
-        const board=await boardChannel.send({
-          embeds:[strikeEmbed(target,state.active)],
-          components:[strikeAppealRow(target.id)],
-          allowedMentions:{users:[target.id]}
-        });
-        state.record.channelId=boardChannel.id;
-        state.record.messageId=board.id;
-        state.record.appealThreadId=null;
-      }
-      if(!updated){
-        const board=await boardChannel.send({embeds:[strikeEmbed(target,state.active)],components:[strikeAppealRow(target.id)]});
-        state.record.channelId=boardChannel.id;
-        state.record.messageId=board.id;
-        state.record.appealThreadId=null;
-      }
+      state.record.appealThreadId=null;
       saveData();
+      await updateStrikeBoard(i.guild);
       return i.reply({content:'✅ Strike added to '+target+'.',ephemeral:true});
     }
 
