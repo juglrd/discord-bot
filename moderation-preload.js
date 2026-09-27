@@ -185,7 +185,7 @@ function install(client){
   client.on('autoModerationRuleCreate',()=>automodRules.clear());
   client.on('autoModerationRuleUpdate',()=>automodRules.clear());
   client.on('autoModerationRuleDelete',()=>automodRules.clear());
-  client.on('interactionCreate',async i=>{
+  globalThis.__juglrdModerationInteractionHandler=async i=>{
     if(!i.isChatInputCommand()||!i.inGuild())return;
     if(i.commandName!=='blacklist'&&globalThis.__juglrdCommandGuard?.isBlacklisted(i.guild.id,i.user.id))return i.reply({content:"❌ You are command blacklisted and cannot use this bot's commands.",ephemeral:true}).catch(()=>{});
     if(i.commandName==='modpanel'||i.commandName==='modstats'||i.commandName==='history'||i.commandName==='why'||i.commandName==='channelmode'){
@@ -200,5 +200,6 @@ function install(client){
       save();
       return i.reply({content:'Channel detection mode set to '+mode+'.',ephemeral:true});
     }
-  });
+  };
+  console.log('[mod] moderation preload installed');
 }const OriginalLogin=Client.prototype.login;Client.prototype.login=async function(...args){install(this);return OriginalLogin.apply(this,args);};
