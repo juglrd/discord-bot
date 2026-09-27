@@ -108,13 +108,11 @@ async function inspect(message){
   await audit(message.guild,'🚫 Link deleted',`${message.author} • **Channel:** <#${message.channel.id}>\n**Message ID:** \`${message.id}\`\n**Reason:** ${reasons.map(x=>`${x.reason} — \`${x.url}\``).join('\n')}\n**Message:** ${(message.content||'[link/attachment]').slice(0,700).replace(/`/g,'ˋ')}`);
 }
 
-const OriginalLogin=Client.prototype.login;
-Client.prototype.login=async function(...args){
+export function installLinkSecurity(client){
   if(!this.__linkSecurityInstalled){
     this.__linkSecurityInstalled=true;
     this.on('messageCreate',m=>{void inspect(m).catch(e=>console.error('[link] scan failed:',e?.message||e));});
     this.on('messageUpdate',async(_old,m)=>{try{const fresh=await m.fetch().catch(()=>m);await inspect(fresh);}catch(e){console.error('[link] edit scan failed:',e?.message||e);}});
     if(!GOOGLE_KEY)console.warn('[link] GOOGLE_SAFE_BROWSING_API_KEY is not set; using local high-confidence link/IP-logger detection only.');
   }
-  return OriginalLogin.apply(this,args);
-};
+}
