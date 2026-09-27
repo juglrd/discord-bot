@@ -7,7 +7,7 @@ if (!process.env.DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in enviro
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessageReactions], partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User] });
 const DATA_FILE = './settings.json';
 const DEFAULT_PREFIX = "'";
-const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, strikes: {}, strikeChannelId: null, commandBlacklist: {}, skullLeaderSince: null };
+const DEFAULTS = { prefix: DEFAULT_PREFIX, nsfwFilter: true, goreFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, strikes: {}, strikeChannelId: null, strikeBoardMessageId: null, commandBlacklist: {}, skullLeaderSince: null };
 const STRIKE_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const STRIKE_APPEAL_PREFIX = 'strike_appeal:';
 
@@ -345,10 +345,18 @@ client.on('interactionCreate',async i=>{
     if(i.commandName==='strikesetup'){
       if(!i.channel?.isTextBased()||!i.channel.threads)return i.reply({content:'❌ Use this command in a normal text channel.',ephemeral:true});
       cfg.strikeChannelId=i.channel.id;
-      const board=await i.channel.send({embeds:[strikeBoardEmbed(i.guild)],components:[strikeAppealRow()],allowedMentions:{parse:[]}});
-      cfg.strikeBoardMessageId=board.id;
+      let board=null;
+      if(cfg.strikeBoardMessageId){
+        board=await i.channel.messages.fetch(cfg.strikeBoardMessageId).catch(()=>null);
+      }
+      if(board){
+        await board.edit({embeds:[strikeBoardEmbed(i.guild)],components:[strikeAppealRow()],allowedMentions:{parse:[]}});
+      }else{
+        board=await i.channel.send({embeds:[strikeBoardEmbed(i.guild)],components:[strikeAppealRow()],allowedMentions:{parse:[]}});
+        cfg.strikeBoardMessageId=board.id;
+      }
       saveData();
-      return i.reply({content:'✅ Staff strike system set up. The strikeboard has been created above.',ephemeral:true});
+      return i.reply({content:'✅ Staff strike system set up. The strikeboard has been created/updated above.',ephemeral:true});
     }
 
     if(i.commandName==='removestrike'){
@@ -359,7 +367,7 @@ client.on('interactionCreate',async i=>{
       state.record.items=state.active.filter((_,n)=>n!==number-1);
       state.record.history.push({...removed,status:'removed',removedAt:new Date().toISOString(),removedBy:i.user.id});
       saveData();
-      await updateStrikeBoard(i.guild,target.id);
+      await updateStrikeBoard(i.guild);
       return i.reply({content:'✅ Removed strike **#'+number+'** from '+target+'.',ephemeral:true});
     }
 
