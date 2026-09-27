@@ -4,6 +4,9 @@ import { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandB
 
 if (!process.env.DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in environment variables.'); process.exit(1); }
 
+process.on('unhandledRejection', e => console.error('[process] unhandledRejection:', e?.stack || e));
+process.on('uncaughtException', e => console.error('[process] uncaughtException:', e?.stack || e));
+
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessageReactions], partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User] });
 const DATA_FILE = './settings.json';
 const DEFAULT_PREFIX = "'";
@@ -226,7 +229,11 @@ client.on('interactionCreate',async i=>{
   const filterCommands=['prefix','nsfw','gore','setlogs','config','antiinvite','antispam'];
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
   const advancedCommands=['modpanel','modstats','history','why','channelmode'];
-  if(advancedCommands.includes(i.commandName))return;
+  if(advancedCommands.includes(i.commandName)){
+    const handler=globalThis.__juglrdModerationInteractionHandler;
+    if(typeof handler==='function')return handler(i);
+    return i.reply({content:'❌ Moderation systems are still loading. Please try again in a moment.',ephemeral:true}).catch(()=>{});
+  }
   const handledCommands=new Set(['help','strike','strikesetup','removestrike','paststrikes','skulls','skullboard','addskulls','removeskulls','blacklist',...filterCommands,...moderationCommands]);
   const replyError=async e=>{
     console.error('Interaction failed:',e?.stack||e?.message||e);
