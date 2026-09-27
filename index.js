@@ -223,7 +223,7 @@ client.on('interactionCreate',async i=>{
   }
 
   const cfg=getConfig(i.guild.id);
-  const filterCommands=['prefix','nsfw','gore','pii','setlogs','config','antiinvite','antispam'];
+  const filterCommands=['prefix','nsfw','gore','setlogs','config','antiinvite','antispam'];
   const moderationCommands=['warn','warnings','clearwarnings','timeout','kick','ban','lock','unlock','slowmode'];
   const advancedCommands=['modpanel','modstats','history','why','channelmode'];
   if(advancedCommands.includes(i.commandName))return;
