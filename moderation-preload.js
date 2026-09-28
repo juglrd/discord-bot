@@ -52,12 +52,21 @@ function regexEscape(value=''){return String(value).replace(/[.*+?^${}()|[\]\\]/
 function keywordMatches(text,keyword){
   const t=String(text||''), k=String(keyword||'').trim();
   if(!k)return false;
+  const nt=norm(t), nk=norm(k);
+  if(!nk)return false;
   if(k.includes('*')){
     const pattern=k.split('*').map(regexEscape).join('.*');
-    try{return new RegExp(pattern,'i').test(t)||new RegExp(pattern,'i').test(norm(t));}catch{return false;}
+    try{return new RegExp(pattern,'i').test(t)||new RegExp(pattern,'i').test(nt);}catch{return false;}
   }
-  const nk=norm(k);
-  return !!nk&&(norm(t).includes(nk)||t.toLowerCase().includes(k.toLowerCase()));
+  // Match keywords as standalone words/phrases, not as substrings inside
+  // another word. Example: "ass" matches "ass" but not "class" or "assassin".
+  // This intentionally reduces false positives from broad AutoMod keyword lists.
+  try{
+    const pattern='(^|[^\\p{L}\\p{N}_])'+regexEscape(nk)+'(?=$|[^\\p{L}\\p{N}_])';
+    return new RegExp(pattern,'iu').test(nt);
+  }catch{
+    return false;
+  }
 }
 async function automodMatches(message){
   const text=message.content||'';
