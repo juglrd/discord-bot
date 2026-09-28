@@ -2,14 +2,21 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, userMention } from 'discord.js';
 
+const STARTUP_LOG = './startup.log';
+function startupLog(...parts){
+  const line = '['+new Date().toISOString()+'] '+parts.map(x=>typeof x==='string'?x:JSON.stringify(x)).join(' ')+'\n';
+  console.log(line.trim());
+  try { fs.appendFileSync(STARTUP_LOG,line); } catch {}
+}
+
 console.log('[startup] index.js loaded');
 console.log('[startup] Node:', process.version);
 console.log('[startup] DISCORD_TOKEN configured:', Boolean(process.env.DISCORD_TOKEN));
-if (!process.env.DISCORD_TOKEN) { throw new Error('DISCORD_TOKEN is missing from the application environment variables.'); }
+if (!process.env.DISCORD_TOKEN) { startupLog('[startup] FATAL: DISCORD_TOKEN is missing'); throw new Error('DISCORD_TOKEN is missing from the application environment variables.'); }
 
-process.on('unhandledRejection', e => console.error('[process] unhandledRejection:', e?.stack || e));
-process.on('uncaughtException', e => console.error('[process] uncaughtException:', e?.stack || e));
-process.on('beforeExit', code => console.error('[process] beforeExit:', code));
+process.on('unhandledRejection', e => { startupLog('[process] unhandledRejection:', e?.stack || e); });
+process.on('uncaughtException', e => { startupLog('[process] uncaughtException:', e?.stack || e); });
+process.on('beforeExit', code => { startupLog('[process] beforeExit:', code); });
 
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessageReactions], partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User] });
@@ -469,6 +476,7 @@ client.on('interactionCreate',async i=>{
   }catch(e){await replyError(e);}
 });
 
+startupLog('[startup] attempting Discord login');
 await client.login(process.env.DISCORD_TOKEN);
-console.log('[startup] Discord login successful');
+startupLog('[startup] Discord login successful');
 process.on('exit',code=>console.error('[startup] Process exiting with code:',code));
