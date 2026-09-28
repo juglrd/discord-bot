@@ -9,7 +9,7 @@ const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPE
 const DATA_FILE = './settings.json';
 const DEFAULTS = { prefix: "'", nsfwFilter: true, goreFilter: true, auditChannelId: null, antiInvite: true, antiSpam: true, warnings: {}, channelModes: {}, history: {} };
 function spamFingerprint(text=''){return norm(text).replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,' ').trim();}
-const cache = new Map(), automodRules = new Map(), userRate = new Map(), spam = new Map(), mentionSpam = new Map(), imageSpam = new Map(), repeatedSpam = new Map(), activeSpam = new Map(), historyRuntime = new Map(), imageFingerprints = new Map(), dashboard = new Map(), queue = [];
+const cache = new Map(), userRate = new Map(), spam = new Map(), mentionSpam = new Map(), imageSpam = new Map(), repeatedSpam = new Map(), activeSpam = new Map(), historyRuntime = new Map(), imageFingerprints = new Map(), dashboard = new Map(), queue = [];
 let active = 0;
 const MAX_CONCURRENCY=1, USER_WINDOW=10000, USER_LIMIT=8, FLOOD_WINDOW=10000, FLOOD_LIMIT=15, MENTION_WINDOW=8000, MENTION_LIMIT=6, IMAGE_WINDOW=10000, IMAGE_LIMIT=6, MAX_QUEUE=100;
 const IMAGE_TYPES=new Set(['image/jpeg','image/jpg','image/png','image/webp','image/gif']);
@@ -28,81 +28,6 @@ function attachmentSummary(attachments=[]){return attachments.length?attachments
 async function log(g,title,body,color=0x5865f2){const c=cfg(g.id);if(!c.auditChannelId)return;const ch=g.channels.cache.get(c.auditChannelId);if(!ch?.isTextBased())return;await ch.send({embeds:[new EmbedBuilder().setTitle(title).setDescription(body.slice(0,3900)).setColor(color).setTimestamp()]}).catch(()=>{});}
 function cached(k){const x=cache.get(k);if(!x||Date.now()-x.time>30000){cache.delete(k);return null;}return x.result;}
 function put(k,result){cache.set(k,{result,time:Date.now()});if(cache.size>500)cache.delete(cache.keys().next().value);}
-async function getAutoModRules(guild){
-  const hit=automodRules.get(guild.id);
-  if(hit&&Date.now()-hit.time<60000)return hit.rules;
-  try{
-    const rules=await guild.autoModerationRules.fetch();
-    const list=[...rules.values()].filter(r=>r.enabled);
-    automodRules.set(guild.id,{rules:list,time:Date.now()});
-    return list;
-  }catch(e){
-    console.error('[mod] AutoMod rule fetch:',e?.message||e);
-    automodRules.set(guild.id,{rules:[],time:Date.now()});
-    return [];
-  }
-}
-function collectionHas(value,id){
-  if(!value)return false;
-  if(typeof value.has==='function')return value.has(id);
-  if(Array.isArray(value))return value.includes(id);
-  return false;
-}
-function regexEscape(value=''){return String(value).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
-function keywordMatches(text,keyword){
-  const t=String(text||''), k=String(keyword||'').trim();
-  if(!k)return false;
-  const nt=norm(t), nk=norm(k);
-  if(!nk)return false;
-  if(k.includes('*')){
-    const pattern=k.split('*').map(regexEscape).join('.*');
-    try{return new RegExp(pattern,'i').test(t)||new RegExp(pattern,'i').test(nt);}catch{return false;}
-  }
-  // Match keywords as standalone words/phrases, not as substrings inside
-  // another word. Example: "ass" matches "ass" but not "class" or "assassin".
-  // This intentionally reduces false positives from broad AutoMod keyword lists.
-  try{
-    const pattern='(^|[^\\p{L}\\p{N}_])'+regexEscape(nk)+'(?=$|[^\\p{L}\\p{N}_])';
-    return new RegExp(pattern,'iu').test(nt);
-  }catch{
-    return false;
-  }
-}
-async function automodMatches(message){
-  const text=message.content||'';
-  if(!text.trim())return [];
-  const rules=await getAutoModRules(message.guild);
-  const roles=message.member?.roles?.cache;
-  const hits=[];
-  for(const rule of rules){
-    // Discord AutoMod exempts Manage Server/Administrator users. This bot
-    // deliberately does not apply that permission-based exemption.
-    // Explicit role/channel exemptions configured on the rule are still respected.
-    if(rule.eventType&&rule.eventType!==1)continue;
-    if(collectionHas(rule.exemptChannels,message.channel.id))continue;
-    const exemptRoles=rule.exemptRoles?.keys?Array.from(rule.exemptRoles.keys()):(rule.exemptRoles||[]);
-    if(exemptRoles.some(id=>collectionHas(roles,id)))continue;
-    const meta=rule.triggerMetadata||{};
-    const allow=meta.allowList||[];
-    if(allow.some(x=>keywordMatches(text,x)))continue;
-    const keyword=meta.keywordFilter||[];
-    const regexes=meta.regexPatterns||[];
-    const keywordHit=keyword.find(x=>keywordMatches(text,x));
-    if(keywordHit)hits.push('**'+rule.name+'** keyword: `'+String(keywordHit).replace(/`/g,'ˋ')+'`');
-    let regexHit=null;
-    for(const pattern of regexes){
-      try{if(new RegExp(pattern,'i').test(text)||new RegExp(pattern,'i').test(norm(text))){regexHit=pattern;break;}}catch{}
-    }
-    if(regexHit)hits.push('**'+rule.name+'** regex: `'+String(regexHit).replace(/`/g,'ˋ')+'`');
-    const mentionLimit=Number(meta.mentionTotalLimit||0);
-    if(mentionLimit>0){
-      const mentionTotal=message.mentions.users.size+message.mentions.roles.size+(message.mentions.everyone?1:0);
-      if(mentionTotal>mentionLimit)hits.push('**'+rule.name+'** mention spam: `'+mentionTotal+' mentions`');
-    }
-    if(hits.length>=5)break;
-  }
-  return hits;
-}
 async function api(fn){for(let i=0;i<3;i++){try{return await fn();}catch(e){if(e?.status!==429)throw e;await new Promise(r=>setTimeout(r,Math.min(8000,1000*(i+1))));}}throw new Error('moderation API rate limited');}
 function enqueue(fn){if(queue.length>=MAX_QUEUE)queue.shift();queue.push(fn);runQueue();}
 async function runQueue(){if(active>=MAX_CONCURRENCY||!queue.length)return;active++;const fn=queue.shift();try{await fn();}catch(e){console.error('[mod] task failed:',e?.message||e);}finally{active--;runQueue();}}
@@ -155,24 +80,6 @@ async function contentScan(message){
   const c=cfg(message.guild.id);
   try{
     const text=message.content?.trim()||'',attachments=[...message.attachments.values()];
-
-    // Re-run the server's enabled AutoMod rules ourselves. This intentionally
-    // ignores the sender's Manage Server/Administrator bypass.
-    const automodHits=await automodMatches(message);
-    if(automodHits.length){
-      const deleted=await message.delete().then(()=>true).catch(()=>false);
-      if(deleted){
-        const reason=automodHits.join(' + ');
-        addHistory(message.guild.id,message.author.id,{type:'AutoMod bypass caught',channelId:message.channel.id,messageId:message.id,details:{reason}});
-        addEvent(message.guild.id,message.channel.id,'AutoMod bypass caught');
-        const d=dashboard.get(message.guild.id)||{};
-        d.removed=(d.removed||0)+1;
-        d.automod=(d.automod||0)+1;
-        dashboard.set(message.guild.id,d);
-        await log(message.guild,'🛡️ AutoMod bypass blocked',message.author+' • **Channel:** <#'+message.channel.id+'>\n**Reason:** '+reason+'\n**Message:** '+(preview(text)||'[attachment]'),0xed4245);
-      }
-      return;
-    }
 
     const r=await combinedModeration(text,attachments,c);
     let reasonsFound=r;
@@ -229,9 +136,6 @@ export function installModeration(client){
     if(newM.content!==oldM.content&&await activeSpamScan(newM))return;
     enqueue(()=>contentScan(newM));
   });
-  client.on('autoModerationRuleCreate',()=>automodRules.clear());
-  client.on('autoModerationRuleUpdate',()=>automodRules.clear());
-  client.on('autoModerationRuleDelete',()=>automodRules.clear());
   globalThis.__juglrdModerationInteractionHandler=async i=>{
     if(!i.isChatInputCommand()||!i.inGuild())return;
     if(i.commandName!=='blacklist'&&globalThis.__juglrdCommandGuard?.isBlacklisted(i.guild.id,i.user.id))return i.reply({content:"❌ You are command blacklisted and cannot use this bot's commands.",ephemeral:true}).catch(()=>{});
