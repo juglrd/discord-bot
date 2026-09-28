@@ -165,7 +165,7 @@ async function executeCommand(message,name,args){
   if(name==='timeout'){const ms=parseDuration(args[1]);if(!ms)return message.reply(`Usage: \`${prefix}timeout @user 10m [reason]\``);await target.timeout(Math.min(ms,28*86400000),args.slice(2).join(' ')||'No reason provided');return message.reply({embeds:[commandEmbed('⏱️ Member timed out','Timed out '+target+' for **'+formatDuration(ms)+'**.',0x57f287)]});}
   if(name==='kick'){await target.kick(args.slice(1).join(' ')||'No reason provided');return message.reply({embeds:[commandEmbed('👢 Member kicked',`Kicked **${target.user.tag}**.`,0x57f287)]});}
   if(name==='ban'){await target.ban({reason:args.slice(1).join(' ')||'No reason provided'});return message.reply({embeds:[commandEmbed('🔨 Member banned',`Banned **${target.user.tag}**.`,0xed4245)]});}
-  if(name==='lock'||name==='unlock'){const locked=name==='lock';await message.channel.permissionOverwrites.edit(message.guild.roles.everyone,{SendMessages:!locked});return message.reply({embeds:[commandEmbed(locked?'🔒 Channel locked':'🔓 Channel unlocked',`${locked?'Locked':'Unlocked'} ${message.channel}.`,0x57f287)]});}
+  if(name==='lock'||name==='unlock'){const locked=name==='lock';await message.channel.permissionOverwrites.edit(message.guild.roles.everyone,{SendMessages:!locked});return message.reply({content:locked?'🔒 This channel has been locked.':'🔓 This channel has been unlocked.'});}
   if(name==='slowmode'){const seconds=Number(args[0]);if(!Number.isInteger(seconds)||seconds<0||seconds>21600)return message.reply({embeds:[commandEmbed('🐢 Slowmode','Enter slowmode seconds from 0 to 21600.',0xed4245)]});await message.channel.setRateLimitPerUser(seconds);return message.reply({embeds:[commandEmbed('🐢 Slowmode updated',`Slowmode set to **${seconds}s**.`,0x57f287)]});}
 }
 
@@ -241,7 +241,7 @@ client.on('interactionCreate',async i=>{
       const targetUser=i.options.getUser('user')||i.user;
       const count=getSkulls(i.guild.id,targetUser.id);
       await i.reply({
-        content:userMention(targetUser.id)+' you have **'+count+'** skull'+(count===1?'':'s')+' 💀',
+        content:userMention(targetUser.id)+' has **'+count+'** :skull:',
         allowedMentions:{users:[targetUser.id]}
       });
     }catch(e){
@@ -474,7 +474,7 @@ client.on('interactionCreate',async i=>{
     if(i.commandName==='lock'||i.commandName==='unlock'){
       const locked=i.commandName==='lock';
       await i.channel.permissionOverwrites.edit(i.guild.roles.everyone,{SendMessages:!locked});
-      return i.reply({embeds:[commandEmbed(locked?'🔒 Channel locked':'🔓 Channel unlocked',(locked?'Locked ':'Unlocked ')+i.channel+'.',0x57f287)]});
+      return i.reply({content:locked?'🔒 This channel has been locked.':'🔓 This channel has been unlocked.'});
     }
 
     if(i.commandName==='slowmode'){
