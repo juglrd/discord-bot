@@ -2,7 +2,10 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandBuilder, EmbedBuilder, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, userMention } from 'discord.js';
 
-if (!process.env.DISCORD_TOKEN) { console.error('Missing DISCORD_TOKEN in environment variables.'); process.exit(1); }
+console.log('[startup] index.js loaded');
+console.log('[startup] Node:', process.version);
+console.log('[startup] DISCORD_TOKEN configured:', Boolean(process.env.DISCORD_TOKEN));
+if (!process.env.DISCORD_TOKEN) { console.error('[startup] FATAL: DISCORD_TOKEN is missing. Add it to the app environment variables.'); process.exit(1); }
 
 process.on('unhandledRejection', e => console.error('[process] unhandledRejection:', e?.stack || e));
 process.on('uncaughtException', e => console.error('[process] uncaughtException:', e?.stack || e));
@@ -10,6 +13,7 @@ process.on('beforeExit', code => console.error('[process] beforeExit:', code));
 
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessageReactions], partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User] });
+console.log('[startup] Discord client constructed');
 
 const DATA_FILE = './settings.json';
 const DEFAULT_PREFIX = "'";
@@ -465,4 +469,16 @@ client.on('interactionCreate',async i=>{
   }catch(e){await replyError(e);}
 });
 
-client.login(process.env.DISCORD_TOKEN).then(()=>console.log('Discord login successful')).catch(e=>{console.error('Discord login failed:',e?.message||e);process.exit(1);});
+client.login(process.env.DISCORD_TOKEN)
+  .then(()=>console.log('[startup] Discord login successful'))
+  .catch(e=>{
+    console.error('[startup] Discord login failed');
+    console.error('[startup] name:',e?.name);
+    console.error('[startup] code:',e?.code);
+    console.error('[startup] status:',e?.status);
+    console.error('[startup] message:',e?.message);
+    console.error('[startup] stack:',e?.stack);
+    process.exit(1);
+  });
+
+process.on('exit',code=>console.error('[startup] Process exiting with code:',code));
