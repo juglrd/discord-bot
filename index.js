@@ -171,6 +171,7 @@ async function executeCommand(message,name,args){
 
 const slashCommands=[
  new SlashCommandBuilder().setName('help').setDescription('Show moderation commands'),
+ new SlashCommandBuilder().setName('ping').setDescription('Test the bot connection'),
  new SlashCommandBuilder().setName('nsfw').setDescription('Toggle NSFW filter').addStringOption(o=>o.setName('state').setDescription('on/off').setRequired(true).addChoices({name:'on',value:'on'},{name:'off',value:'off'})),
  new SlashCommandBuilder().setName('gore').setDescription('Toggle gore filter').addStringOption(o=>o.setName('state').setDescription('on/off').setRequired(true).addChoices({name:'on',value:'on'},{name:'off',value:'off'})),
  new SlashCommandBuilder().setName('setlogs').setDescription('Set audit log channel').addChannelOption(o=>o.setName('channel').setDescription('Log channel').addChannelTypes(ChannelType.GuildText).setRequired(true)),
@@ -210,7 +211,16 @@ client.on('messageCreate',async message=>{if(!message.inGuild()||message.author.
 client.on('messageReactionAdd',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author||message.author.bot)return;changeSkulls(message.guild.id,message.author.id,1);}catch(e){console.error('Skull reaction add failed:',e?.message||e);}});
 client.on('messageReactionRemove',async(reaction,user)=>{if(user.bot||!isSkullReaction(reaction))return;try{if(reaction.partial)await reaction.fetch();const message=reaction.message;if(!message?.guild||!message.author||message.author.bot)return;changeSkulls(message.guild.id,message.author.id,-1);}catch(e){console.error('Skull reaction remove failed:',e?.message||e);}});
 client.on('interactionCreate',async i=>{
+  console.log('[interaction] received:',i.id,i.type,i.isChatInputCommand()?i.commandName:'non-command');
   if(!i.inGuild())return;
+  if(i.isChatInputCommand()&&i.commandName==='ping'){
+    try{
+      await i.reply({content:'🏓 Pong!'});
+    }catch(e){
+      console.error('[interaction] ping reply failed:',e?.stack||e);
+    }
+    return;
+  }
 
   if(i.isChatInputCommand()&&i.commandName!=='blacklist'&&commandGuard.isBlacklisted(i.guild.id,i.user.id))return i.reply({content:"❌ You are command blacklisted and cannot use this bot's commands.",ephemeral:true}).catch(()=>{});
 
