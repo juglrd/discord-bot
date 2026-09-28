@@ -5,7 +5,7 @@ import { Client, GatewayIntentBits, Partials, PermissionsBitField, SlashCommandB
 console.log('[startup] index.js loaded');
 console.log('[startup] Node:', process.version);
 console.log('[startup] DISCORD_TOKEN configured:', Boolean(process.env.DISCORD_TOKEN));
-if (!process.env.DISCORD_TOKEN) { console.error('[startup] FATAL: DISCORD_TOKEN is missing. Add it to the app environment variables.'); process.exit(1); }
+if (!process.env.DISCORD_TOKEN) { throw new Error('DISCORD_TOKEN is missing from the application environment variables.'); }
 
 process.on('unhandledRejection', e => console.error('[process] unhandledRejection:', e?.stack || e));
 process.on('uncaughtException', e => console.error('[process] uncaughtException:', e?.stack || e));
@@ -469,16 +469,6 @@ client.on('interactionCreate',async i=>{
   }catch(e){await replyError(e);}
 });
 
-client.login(process.env.DISCORD_TOKEN)
-  .then(()=>console.log('[startup] Discord login successful'))
-  .catch(e=>{
-    console.error('[startup] Discord login failed');
-    console.error('[startup] name:',e?.name);
-    console.error('[startup] code:',e?.code);
-    console.error('[startup] status:',e?.status);
-    console.error('[startup] message:',e?.message);
-    console.error('[startup] stack:',e?.stack);
-    process.exit(1);
-  });
-
+await client.login(process.env.DISCORD_TOKEN);
+console.log('[startup] Discord login successful');
 process.on('exit',code=>console.error('[startup] Process exiting with code:',code));
